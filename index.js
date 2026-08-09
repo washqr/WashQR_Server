@@ -7,76 +7,81 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+
 // ========================================
-// ПРОВЕРКА СЕРВЕРА
+// ГЛАВНАЯ СТРАНИЦА
 // ========================================
 
 app.get("/", (req, res) => {
     res.send(`
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>WashQR</title>
+        <!DOCTYPE html>
+        <html lang="ru">
+        <head>
+            <meta charset="UTF-8">
 
-    <style>
-        body {
-            margin: 0;
-            font-family: Arial, sans-serif;
-            background: #f2f5f8;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-        }
+            <title>WashQR Server</title>
 
-        .box {
-            background: white;
-            width: 90%;
-            max-width: 420px;
-            padding: 30px;
-            border-radius: 20px;
-            text-align: center;
-            box-shadow: 0 5px 25px rgba(0,0,0,0.1);
-        }
+            <style>
+                body {
+                    margin: 0;
+                    font-family: Arial, sans-serif;
+                    background: #0D47A1;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    min-height: 100vh;
+                }
 
-        h1 {
-            font-size: 32px;
-            margin-bottom: 10px;
-        }
+                .box {
+                    background: white;
+                    width: 90%;
+                    max-width: 420px;
+                    padding: 30px;
+                    border-radius: 20px;
+                    text-align: center;
+                    box-shadow: 0 5px 25px rgba(0,0,0,0.25);
+                }
 
-        p {
-            color: #666;
-            font-size: 18px;
-        }
+                h1 {
+                    color: #0D47A1;
+                    font-size: 32px;
+                }
 
-        .status {
-            margin-top: 25px;
-            padding: 15px;
-            border-radius: 12px;
-            background: #e8f5e9;
-            color: #2e7d32;
-            font-weight: bold;
-        }
-    </style>
-</head>
+                p {
+                    color: #666;
+                    font-size: 18px;
+                }
 
-<body>
+                .status {
+                    margin-top: 25px;
+                    padding: 15px;
+                    border-radius: 12px;
+                    background: #e8f5e9;
+                    color: #2e7d32;
+                    font-weight: bold;
+                }
+            </style>
+        </head>
 
-    <div class="box">
-        <h1>🚗 WashQR</h1>
+        <body>
 
-        <p>QR-оплата автомойки</p>
+            <div class="box">
 
-        <div class="status">
-            ✅ Сервер работает
-        </div>
-    </div>
+                <h1>🚗 WashQR</h1>
 
-</body>
-</html>
+                <p>QR-оплата автомойки</p>
+
+                <div class="status">
+                    ✅ Сервер работает
+                </div>
+
+            </div>
+
+        </body>
+        </html>
     `);
 });
+
 
 // ========================================
 // РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ
@@ -86,10 +91,6 @@ app.post("/register", (req, res) => {
 
     const { name, phone, pin } = req.body;
 
-    console.log("Регистрация пользователя:");
-    console.log("Имя:", name);
-    console.log("Телефон:", phone);
-
     if (!name || !phone || !pin) {
         return res.status(400).json({
             success: false,
@@ -97,7 +98,7 @@ app.post("/register", (req, res) => {
         });
     }
 
-    if (pin.length !== 4) {
+    if (String(pin).length !== 4) {
         return res.status(400).json({
             success: false,
             message: "PIN-код должен содержать 4 цифры"
@@ -124,12 +125,19 @@ app.post("/register", (req, res) => {
         `).run(
             name,
             phone,
-            pin
+            String(pin)
         );
 
-        const user = db.prepare(
-            "SELECT id, name, phone, balance, bonus FROM users WHERE id = ?"
-        ).get(result.lastInsertRowid);
+        const user = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                balance,
+                bonus
+            FROM users
+            WHERE id = ?
+        `).get(result.lastInsertRowid);
 
         console.log("Пользователь зарегистрирован:", user);
 
@@ -150,6 +158,7 @@ app.post("/register", (req, res) => {
     }
 });
 
+
 // ========================================
 // ВХОД В АККАУНТ
 // ========================================
@@ -157,9 +166,6 @@ app.post("/register", (req, res) => {
 app.post("/login", (req, res) => {
 
     const { phone, pin } = req.body;
-
-    console.log("Попытка входа:");
-    console.log("Телефон:", phone);
 
     if (!phone || !pin) {
         return res.status(400).json({
@@ -182,18 +188,7 @@ app.post("/login", (req, res) => {
             WHERE phone = ?
         `).get(phone);
 
-        if (!user) {
-            console.log("Пользователь не найден");
-
-            return res.status(401).json({
-                success: false,
-                message: "Неверный номер телефона или PIN-код"
-            });
-        }
-
-        if (user.pin !== pin) {
-            console.log("Неверный PIN-код");
-
+        if (!user || user.pin !== String(pin)) {
             return res.status(401).json({
                 success: false,
                 message: "Неверный номер телефона или PIN-код"
@@ -221,6 +216,7 @@ app.post("/login", (req, res) => {
     }
 });
 
+
 // ========================================
 // СОЗДАНИЕ ПЛАТЕЖА
 // ========================================
@@ -228,10 +224,6 @@ app.post("/login", (req, res) => {
 app.post("/create-payment", (req, res) => {
 
     const { post, amount } = req.body;
-
-    console.log("Создание платежа:");
-    console.log("Пост:", post);
-    console.log("Сумма:", amount);
 
     if (!post || !amount) {
         return res.status(400).json({
@@ -246,33 +238,279 @@ app.post("/create-payment", (req, res) => {
         "-" +
         Math.floor(Math.random() * 1000);
 
-    const payment = {
-        id: paymentId,
-        post: post,
-        amount: amount,
-        status: "pending",
-        createdAt: new Date().toISOString()
-    };
+    const createdAt = new Date().toISOString();
 
-    console.log("Платёж создан:");
-    console.log(payment);
+    try {
 
-    res.json({
-        success: true,
-        payment: payment
-    });
+        db.prepare(`
+            INSERT INTO payments
+            (
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            paymentId,
+            post,
+            amount,
+            "pending",
+            createdAt
+        );
+
+        const payment = db.prepare(`
+            SELECT
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            FROM payments
+            WHERE id = ?
+        `).get(paymentId);
+
+        console.log("Платёж создан:", payment);
+
+        res.json({
+            success: true,
+            payment: payment
+        });
+
+    } catch (error) {
+
+        console.error("Ошибка создания платежа:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка создания платежа"
+        });
+    }
 });
 
+
+// ========================================
+// ПРОВЕРКА СТАТУСА ПЛАТЕЖА
+// ========================================
+
+app.get("/payment-status/:paymentId", (req, res) => {
+
+    const { paymentId } = req.params;
+
+    try {
+
+        const payment = db.prepare(`
+            SELECT
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            FROM payments
+            WHERE id = ?
+        `).get(paymentId);
+
+        if (!payment) {
+            return res.status(404).json({
+                success: false,
+                message: "Платёж не найден"
+            });
+        }
+
+        res.json({
+            success: true,
+            paymentId: payment.id,
+            status: payment.status,
+            post: payment.post,
+            amount: payment.amount
+        });
+
+    } catch (error) {
+
+        console.error("Ошибка проверки платежа:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+
+// ========================================
+// ТЕСТОВОЕ ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА
+// ВРЕМЕННО — ДЛЯ ПРОВЕРКИ
+// ========================================
+
+app.post("/test-pay/:paymentId", (req, res) => {
+
+    const { paymentId } = req.params;
+
+    try {
+
+        const result = db.prepare(`
+            UPDATE payments
+            SET status = 'paid'
+            WHERE id = ?
+        `).run(paymentId);
+
+        if (result.changes === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Платёж не найден"
+            });
+        }
+
+        const payment = db.prepare(`
+            SELECT *
+            FROM payments
+            WHERE id = ?
+        `).get(paymentId);
+
+        console.log("Платёж подтверждён:", payment);
+
+        res.json({
+            success: true,
+            message: "Платёж успешно подтверждён",
+            payment: payment
+        });
+
+    } catch (error) {
+
+        console.error("Ошибка подтверждения платежа:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+
+// ========================================
+// СПИСОК ВСЕХ ПЛАТЕЖЕЙ
+// ТЕСТОВЫЙ МАРШРУТ
+// ========================================
+
+app.get("/payments", (req, res) => {
+
+    try {
+
+        const payments = db.prepare(`
+            SELECT *
+            FROM payments
+            ORDER BY created_at DESC
+        `).all();
+
+        res.json({
+            success: true,
+            payments: payments
+        });
+
+    } catch (error) {
+
+        console.error("Ошибка получения платежей:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
+// ТЕСТОВОЕ ПОДТВЕРЖДЕНИЕ ЧЕРЕЗ БРАУЗЕР
+// ========================================
+
+app.get("/test-pay/:paymentId", (req, res) => {
+
+    const { paymentId } = req.params;
+
+    try {
+
+        const result = db.prepare(`
+            UPDATE payments
+            SET status = 'paid'
+            WHERE id = ?
+        `).run(paymentId);
+
+        if (result.changes === 0) {
+            return res.status(404).send(`
+                <h2>Платёж не найден</h2>
+                <p>${paymentId}</p>
+            `);
+        }
+
+        res.send(`
+            <h2>✅ Платёж подтверждён</h2>
+            <p>ID: ${paymentId}</p>
+            <p>Теперь приложение должно показать: Платёж подтверждён</p>
+        `);
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).send(`
+            <h2>Ошибка сервера</h2>
+        `);
+    }
+});
 // ========================================
 // ЗАПУСК СЕРВЕРА
 // ========================================
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
+// ========================================
+// ТЕСТОВОЕ ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА
+// ========================================
+
+app.get("/test-pay/:paymentId", (req, res) => {
+    const { paymentId } = req.params;
+
+    db.run(
+        `
+        UPDATE payments
+        SET status = 'paid'
+        WHERE id = ?
+        `,
+        [paymentId],
+        function (err) {
+            if (err) {
+                console.error("Ошибка подтверждения платежа:", err);
+
+                return res.status(500).json({
+                    success: false,
+                    message: "Ошибка сервера"
+                });
+            }
+
+            if (this.changes === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Платёж не найден"
+                });
+            }
+
+            console.log("Платёж подтверждён:", paymentId);
+
+            res.json({
+                success: true,
+                message: "Платёж подтверждён",
+                paymentId: paymentId,
+                status: "paid"
+            });
+        }
+    );
+});
 app.listen(PORT, "0.0.0.0", () => {
+
     console.log("=================================");
     console.log("База WashQR готова.");
     console.log("WashQR Server запущен");
     console.log("Порт:", PORT);
     console.log("=================================");
+
 });
