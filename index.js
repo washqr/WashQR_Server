@@ -216,6 +216,117 @@ app.post("/login", (req, res) => {
     }
 });
 
+// ========================================
+// ОПЛАТА БОНУСАМИ
+// ========================================
+
+// ========================================
+// ТЕСТОВОЕ ПОПОЛНЕНИЕ БОНУСОВ
+// ВРЕМЕННО
+// ========================================
+
+app.post("/test-bonus/:userId", (req, res) => {
+    const { userId } = req.params;
+    const amount = 50;
+
+    try {
+        const result = db.prepare(`
+            UPDATE users
+            SET bonus = bonus + ?
+            WHERE id = ?
+        `).run(amount, userId);
+
+        if (result.changes === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Пользователь не найден"
+            });
+        }
+
+        const user = db.prepare(`
+            SELECT id, name, bonus
+            FROM users
+            WHERE id = ?
+        `).get(userId);
+
+        console.log(
+            `Тестовое пополнение бонусов: пользователь ${userId}, +${amount} сом`
+        );
+
+        res.json({
+            success: true,
+            message: "Бонусы пополнены",
+            user: user
+        });
+
+    } catch (error) {
+        console.error("Ошибка тестового пополнения:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+app.post("/pay-bonus", (req, res) => {
+    const { userId, post, amount } = req.body;
+
+    if (!userId || !post || !amount) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан пользователь, пост или сумма"
+        });
+    }
+
+    try {
+        const user = db.prepare(`
+            SELECT id, name, bonus
+            FROM users
+            WHERE id = ?
+        `).get(userId);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "Пользователь не найден"
+            });
+        }
+
+        if (user.bonus < amount) {
+            return res.status(400).json({
+                success: false,
+                message: "Недостаточно бонусов"
+            });
+        }
+
+        db.prepare(`
+            UPDATE users
+            SET bonus = bonus - ?
+            WHERE id = ?
+        `).run(amount, userId);
+
+        console.log(
+            `Оплата бонусами: пользователь ${userId}, пост ${post}, сумма ${amount}`
+        );
+
+        res.json({
+            success: true,
+            message: "Оплата бонусами выполнена",
+            userId: userId,
+            post: post,
+            amount: amount
+        });
+
+    } catch (error) {
+        console.error("Ошибка оплаты бонусами:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
 
 // ========================================
 // СОЗДАНИЕ ПЛАТЕЖА
