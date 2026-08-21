@@ -40,6 +40,20 @@ db.prepare(`
     )
 `).run();
 
-console.log("Таблицы users и payments готовы");
+// ========================================
+// КОМАНДЫ ДЛЯ ESP32
+// ========================================
+
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS esp32_commands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        post INTEGER NOT NULL,
+        coins INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL
+    )
+`).run();
+
+console.log("Таблицы users, payments и esp32_commands готовы");
 
 module.exports = db;

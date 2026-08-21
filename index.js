@@ -18,9 +18,7 @@ app.get("/", (req, res) => {
         <html lang="ru">
         <head>
             <meta charset="UTF-8">
-
             <title>WashQR Server</title>
-
             <style>
                 body {
                     margin: 0;
@@ -64,19 +62,14 @@ app.get("/", (req, res) => {
         </head>
 
         <body>
-
             <div class="box">
-
                 <h1>🚗 WashQR</h1>
-
                 <p>QR-оплата автомойки</p>
 
                 <div class="status">
                     ✅ Сервер работает
                 </div>
-
             </div>
-
         </body>
         </html>
     `);
@@ -216,9 +209,6 @@ app.post("/login", (req, res) => {
     }
 });
 
-// ========================================
-// ОПЛАТА БОНУСАМИ
-// ========================================
 
 // ========================================
 // ТЕСТОВОЕ ПОПОЛНЕНИЕ БОНУСОВ
@@ -226,10 +216,12 @@ app.post("/login", (req, res) => {
 // ========================================
 
 app.post("/test-bonus/:userId", (req, res) => {
+
     const { userId } = req.params;
     const amount = 50;
 
     try {
+
         const result = db.prepare(`
             UPDATE users
             SET bonus = bonus + ?
@@ -260,6 +252,7 @@ app.post("/test-bonus/:userId", (req, res) => {
         });
 
     } catch (error) {
+
         console.error("Ошибка тестового пополнения:", error);
 
         res.status(500).json({
@@ -269,7 +262,13 @@ app.post("/test-bonus/:userId", (req, res) => {
     }
 });
 
+
+// ========================================
+// ОПЛАТА БОНУСАМИ
+// ========================================
+
 app.post("/pay-bonus", (req, res) => {
+
     const { userId, post, amount } = req.body;
 
     if (!userId || !post || !amount) {
@@ -279,12 +278,38 @@ app.post("/pay-bonus", (req, res) => {
         });
     }
 
+    const numericAmount = Number(amount);
+    const numericPost = Number(post);
+    const numericUserId = Number(userId);
+
+    if (
+        !Number.isInteger(numericUserId) ||
+        !Number.isInteger(numericPost) ||
+        !Number.isFinite(numericAmount) ||
+        numericAmount <= 0
+    ) {
+        return res.status(400).json({
+            success: false,
+            message: "Некорректные данные оплаты"
+        });
+    }
+
+    const coins = Math.floor(numericAmount / 10);
+
+    if (coins <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Сумма слишком мала для запуска поста"
+        });
+    }
+
     try {
+
         const user = db.prepare(`
             SELECT id, name, bonus
             FROM users
             WHERE id = ?
-        `).get(userId);
+        `).get(numericUserId);
 
         if (!user) {
             return res.status(404).json({
@@ -293,32 +318,62 @@ app.post("/pay-bonus", (req, res) => {
             });
         }
 
-        if (user.bonus < amount) {
+        if (user.bonus < numericAmount) {
             return res.status(400).json({
                 success: false,
                 message: "Недостаточно бонусов"
             });
         }
 
-        db.prepare(`
-            UPDATE users
-            SET bonus = bonus - ?
-            WHERE id = ?
-        `).run(amount, userId);
+        // Списываем бонусы и создаём команду
+        // для ESP32 одной транзакцией.
+        const payTransaction = db.transaction(() => {
+
+            db.prepare(`
+                UPDATE users
+                SET bonus = bonus - ?
+                WHERE id = ?
+            `).run(
+                numericAmount,
+                numericUserId
+            );
+
+            const commandResult = db.prepare(`
+                INSERT INTO esp32_commands
+                (
+                    post,
+                    coins,
+                    status,
+                    created_at
+                )
+                VALUES (?, ?, 'pending', ?)
+            `).run(
+                numericPost,
+                coins,
+                new Date().toISOString()
+            );
+
+            return commandResult.lastInsertRowid;
+        });
+
+        const commandId = payTransaction();
 
         console.log(
-            `Оплата бонусами: пользователь ${userId}, пост ${post}, сумма ${amount}`
+            `Оплата бонусами: пользователь ${numericUserId}, пост ${numericPost}, сумма ${numericAmount}, импульсов ${coins}, команда ${commandId}`
         );
 
         res.json({
             success: true,
             message: "Оплата бонусами выполнена",
-            userId: userId,
-            post: post,
-            amount: amount
+            userId: numericUserId,
+            post: numericPost,
+            amount: numericAmount,
+            coins: coins,
+            commandId: commandId
         });
 
     } catch (error) {
+
         console.error("Ошибка оплаты бонусами:", error);
 
         res.status(500).json({
@@ -327,6 +382,131 @@ app.post("/pay-bonus", (req, res) => {
         });
     }
 });
+
+
+// ========================================
+// ESP32
+// ПОЛУЧИТЬ КОМАНДУ
+// ========================================
+
+app.get("/esp32/command", (req, res) => {
+
+    const post = Number(req.query.post);
+
+    if (!Number.isInteger(post) || post <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан корректный номер поста"
+        });
+    }
+
+    try {
+
+        const command = db.prepare(`
+            SELECT
+                id,
+                post,
+                coins,
+                status,
+                created_at
+            FROM esp32_commands
+            WHERE post = ?
+              AND status = 'pending'
+            ORDER BY id ASC
+            LIMIT 1
+        `).get(post);
+
+        if (!command) {
+            return res.json({
+                success: true,
+                command: null
+            });
+        }
+
+        // Помечаем команду как выданную ESP32.
+        db.prepare(`
+            UPDATE esp32_commands
+            SET status = 'processing'
+            WHERE id = ?
+        `).run(command.id);
+
+        console.log(
+            `Команда отправлена ESP32: команда ${command.id}, пост ${command.post}, импульсов ${command.coins}`
+        );
+
+        res.json({
+            success: true,
+            command: {
+                id: command.id,
+                post: command.post,
+                coins: command.coins
+            }
+        });
+
+    } catch (error) {
+
+        console.error("Ошибка выдачи команды ESP32:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+
+// ========================================
+// ESP32
+// ПОДТВЕРДИТЬ ВЫПОЛНЕНИЕ КОМАНДЫ
+// ========================================
+
+app.post("/esp32/command/:commandId/complete", (req, res) => {
+
+    const commandId = Number(req.params.commandId);
+
+    if (!Number.isInteger(commandId)) {
+        return res.status(400).json({
+            success: false,
+            message: "Некорректный ID команды"
+        });
+    }
+
+    try {
+
+        const result = db.prepare(`
+            UPDATE esp32_commands
+            SET status = 'done'
+            WHERE id = ?
+              AND status = 'processing'
+        `).run(commandId);
+
+        if (result.changes === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Команда не найдена или уже выполнена"
+            });
+        }
+
+        console.log(
+            `Команда ESP32 выполнена: ${commandId}`
+        );
+
+        res.json({
+            success: true,
+            message: "Команда выполнена"
+        });
+
+    } catch (error) {
+
+        console.error("Ошибка подтверждения команды:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
 
 // ========================================
 // СОЗДАНИЕ ПЛАТЕЖА
@@ -451,7 +631,7 @@ app.get("/payment-status/:paymentId", (req, res) => {
 
 // ========================================
 // ТЕСТОВОЕ ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА
-// ВРЕМЕННО — ДЛЯ ПРОВЕРКИ
+// ВРЕМЕННО
 // ========================================
 
 app.post("/test-pay/:paymentId", (req, res) => {
@@ -530,6 +710,7 @@ app.get("/payments", (req, res) => {
     }
 });
 
+
 // ========================================
 // ТЕСТОВОЕ ПОДТВЕРЖДЕНИЕ ЧЕРЕЗ БРАУЗЕР
 // ========================================
@@ -568,54 +749,14 @@ app.get("/test-pay/:paymentId", (req, res) => {
         `);
     }
 });
+
+
 // ========================================
 // ЗАПУСК СЕРВЕРА
 // ========================================
 
 const PORT = process.env.PORT || 3000;
 
-// ========================================
-// ТЕСТОВОЕ ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА
-// ========================================
-
-app.get("/test-pay/:paymentId", (req, res) => {
-    const { paymentId } = req.params;
-
-    db.run(
-        `
-        UPDATE payments
-        SET status = 'paid'
-        WHERE id = ?
-        `,
-        [paymentId],
-        function (err) {
-            if (err) {
-                console.error("Ошибка подтверждения платежа:", err);
-
-                return res.status(500).json({
-                    success: false,
-                    message: "Ошибка сервера"
-                });
-            }
-
-            if (this.changes === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Платёж не найден"
-                });
-            }
-
-            console.log("Платёж подтверждён:", paymentId);
-
-            res.json({
-                success: true,
-                message: "Платёж подтверждён",
-                paymentId: paymentId,
-                status: "paid"
-            });
-        }
-    );
-});
 app.listen(PORT, "0.0.0.0", () => {
 
     console.log("=================================");
