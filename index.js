@@ -539,6 +539,129 @@ app.post("/admin/reset-pin", (req, res) => {
 });
 
 // ========================================
+// ПОПОЛНЕНИЕ БОНУСОВ АДМИНИСТРАТОРОМ
+// ========================================
+
+app.post("/admin/add-bonus", (req, res) => {
+
+    const {
+        adminPhone,
+        userId,
+        amount
+    } = req.body;
+
+    if (!adminPhone || !userId || amount === undefined || amount === null) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан администратор, пользователь или сумма"
+        });
+    }
+
+    const numericAmount = Number(amount);
+
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Сумма должна быть больше нуля"
+        });
+    }
+
+    try {
+
+        // Проверяем администратора
+        const admin = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(adminPhone);
+
+        if (!admin || admin.role !== "admin") {
+            return res.status(403).json({
+                success: false,
+                message: "Доступ запрещён"
+            });
+        }
+
+        // Ищем клиента
+        const user = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                balance,
+                bonus,
+                role
+            FROM users
+            WHERE id = ?
+        `).get(userId);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "Пользователь не найден"
+            });
+        }
+
+        // Нельзя пополнять бонусы администратора
+        if (user.role === "admin") {
+            return res.status(400).json({
+                success: false,
+                message: "Нельзя пополнить бонусы администратора"
+            });
+        }
+
+        // Пополняем бонусы
+        db.prepare(`
+            UPDATE users
+            SET bonus = bonus + ?
+            WHERE id = ?
+        `).run(
+            numericAmount,
+            user.id
+        );
+
+        // Получаем обновлённого пользователя
+        const updatedUser = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                balance,
+                bonus
+            FROM users
+            WHERE id = ?
+        `).get(user.id);
+
+        console.log(
+            `Администратор ${admin.phone} пополнил бонусы пользователя ${user.phone} на ${numericAmount} сом`
+        );
+
+        res.json({
+            success: true,
+            message: "Бонусы успешно пополнены",
+            user: updatedUser,
+            amount: numericAmount
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка пополнения бонусов администратором:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
 // УСТАНОВКА НОВОГО PIN
 // ========================================
 //
