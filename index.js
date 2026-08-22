@@ -90,7 +90,7 @@ app.post("/register", (req, res) => {
         });
     }
 
-    if (String(pin).length !== 4) {
+    if (!/^\d{4}$/.test(String(pin))) {
         return res.status(400).json({
             success: false,
             message: "PIN-код должен содержать 4 цифры"
@@ -112,8 +112,17 @@ app.post("/register", (req, res) => {
 
         const result = db.prepare(`
             INSERT INTO users
-            (name, phone, pin, balance, bonus)
-            VALUES (?, ?, ?, 0, 0)
+            (
+                name,
+                phone,
+                pin,
+                balance,
+                bonus,
+                role,
+                one_time_pin,
+                one_time_pin_used
+            )
+            VALUES (?, ?, ?, 0, 0, 'user', NULL, 0)
         `).run(
             name,
             phone,
@@ -126,12 +135,16 @@ app.post("/register", (req, res) => {
                 name,
                 phone,
                 balance,
-                bonus
+                bonus,
+                role
             FROM users
             WHERE id = ?
         `).get(result.lastInsertRowid);
 
-        console.log("Пользователь зарегистрирован:", user);
+        console.log(
+            "Пользователь зарегистрирован:",
+            user
+        );
 
         res.json({
             success: true,
@@ -141,7 +154,10 @@ app.post("/register", (req, res) => {
 
     } catch (error) {
 
-        console.error("Ошибка регистрации:", error);
+        console.error(
+            "Ошибка регистрации:",
+            error
+        );
 
         res.status(500).json({
             success: false,
@@ -152,6 +168,19 @@ app.post("/register", (req, res) => {
 
 // ========================================
 // ВХОД В АККАУНТ
+// ========================================
+//
+// Обычный вход:
+// phone + постоянный PIN
+//
+// Вход после восстановления:
+// phone + одноразовый код
+//
+// В этом случае сервер возвращает:
+// forcePinChange: true
+//
+// После этого клиент должен установить
+// новый постоянный PIN.
 // ========================================
 
 app.post("/login", (req, res) => {
@@ -175,19 +204,78 @@ app.post("/login", (req, res) => {
                 pin,
                 balance,
                 bonus,
-                role
+                role,
+                one_time_pin,
+                one_time_pin_used
             FROM users
             WHERE phone = ?
         `).get(phone);
 
-        if (!user || user.pin !== String(pin)) {
+        if (!user) {
             return res.status(401).json({
                 success: false,
                 message: "Неверный номер телефона или PIN-код"
             });
         }
 
-        delete user.pin;
+        const enteredPin = String(pin);
+
+        // ========================================
+        // ПРОВЕРЯЕМ ОДНОРАЗОВЫЙ КОД
+        // ========================================
+
+        if (
+            user.one_time_pin &&
+            user.one_time_pin_used === 0 &&
+            user.one_time_pin === enteredPin
+        ) {
+
+            // Одноразовый код сразу помечаем использованным.
+            db.prepare(`
+                UPDATE users
+                SET one_time_pin_used = 1
+                WHERE id = ?
+            `).run(user.id);
+
+            console.log(
+                `Использован одноразовый код: пользователь ${user.id}`
+            );
+
+            res.json({
+                success: true,
+                message: "Одноразовый код принят",
+                forcePinChange: true,
+
+                user: {
+                    id: user.id,
+                    name: user.name,
+                    phone: user.phone,
+                    balance: user.balance,
+                    bonus: user.bonus,
+                    role: user.role
+                }
+            });
+
+            return;
+        }
+
+        // ========================================
+        // ПРОВЕРЯЕМ ОБЫЧНЫЙ PIN
+        // ========================================
+
+        if (
+            !user.pin ||
+            user.pin !== enteredPin
+        ) {
+            return res.status(401).json({
+                success: false,
+                message: "Неверный номер телефона или PIN-код"
+            });
+        }
+
+        // ========================================
+        // УСПЕШНЫЙ ОБЫЧНЫЙ ВХОД
+        // ========================================
 
         console.log(
             `Вход выполнен: пользователь ${user.id}, роль ${user.role}`
@@ -196,12 +284,368 @@ app.post("/login", (req, res) => {
         res.json({
             success: true,
             message: "Вход выполнен",
-            user: user
+            forcePinChange: false,
+
+            user: {
+                id: user.id,
+                name: user.name,
+                phone: user.phone,
+                balance: user.balance,
+                bonus: user.bonus,
+                role: user.role
+            }
         });
 
     } catch (error) {
 
-        console.error("Ошибка входа:", error);
+        console.error(
+            "Ошибка входа:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
+// СПИСОК ПОЛЬЗОВАТЕЛЕЙ ДЛЯ АДМИНИСТРАТОРА
+// ========================================
+//
+// Администратор передаёт свой номер.
+//
+// Пример:
+// {
+//     "adminPhone": "0228005110"
+// }
+//
+// Сервер проверяет, что это admin.
+// ========================================
+
+app.get("/admin/users", (req, res) => {
+
+    const adminPhone = req.query.adminPhone;
+
+    if (!adminPhone) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан номер администратора"
+        });
+    }
+
+    try {
+
+        const admin = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(adminPhone);
+
+        if (!admin || admin.role !== "admin") {
+            return res.status(403).json({
+                success: false,
+                message: "Доступ запрещён"
+            });
+        }
+
+        const users = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                balance,
+                bonus,
+                role
+            FROM users
+            ORDER BY id DESC
+        `).all();
+
+        res.json({
+            success: true,
+            users: users
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка получения пользователей:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
+// СБРОС PIN АДМИНИСТРАТОРОМ
+// ========================================
+//
+// Администратор передаёт:
+//
+// {
+//     "adminPhone": "0228005110",
+//     "userPhone": "0555123456"
+// }
+//
+// Сервер:
+// 1. Проверяет администратора.
+// 2. Находит клиента.
+// 3. Старый PIN удаляет.
+// 4. Создаёт одноразовый код.
+// 5. Возвращает код администратору.
+// ========================================
+
+app.post("/admin/reset-pin", (req, res) => {
+
+    const {
+        adminPhone,
+        userPhone
+    } = req.body;
+
+    if (!adminPhone || !userPhone) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан администратор или пользователь"
+        });
+    }
+
+    try {
+
+        // ========================================
+        // ПРОВЕРЯЕМ АДМИНИСТРАТОРА
+        // ========================================
+
+        const admin = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(adminPhone);
+
+        if (!admin || admin.role !== "admin") {
+            return res.status(403).json({
+                success: false,
+                message: "Доступ запрещён"
+            });
+        }
+
+        // ========================================
+        // ИЩЕМ КЛИЕНТА
+        // ========================================
+
+        const user = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(userPhone);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "Пользователь не найден"
+            });
+        }
+
+        // ========================================
+        // НЕ ПОЗВОЛЯЕМ СБРАСЫВАТЬ PIN ДРУГОМУ ADMIN
+        // ========================================
+
+        if (user.role === "admin") {
+            return res.status(400).json({
+                success: false,
+                message: "PIN администратора нельзя сбросить этим способом"
+            });
+        }
+
+        // ========================================
+        // ГЕНЕРИРУЕМ ОДНОРАЗОВЫЙ КОД
+        // ========================================
+
+        const oneTimePin = String(
+            Math.floor(
+                1000 + Math.random() * 9000
+            )
+        );
+
+        // ========================================
+        // СТАРЫЙ PIN УДАЛЯЕМ
+        //
+        // Новый код записываем отдельно.
+        // ========================================
+
+        db.prepare(`
+            UPDATE users
+            SET
+                pin = '',
+                one_time_pin = ?,
+                one_time_pin_used = 0
+            WHERE id = ?
+        `).run(
+            oneTimePin,
+            user.id
+        );
+
+        console.log(
+            `Администратор ${admin.phone} сбросил PIN пользователя ${user.phone}`
+        );
+
+        console.log(
+            `Одноразовый код для ${user.phone}: ${oneTimePin}`
+        );
+
+        // ========================================
+        // ОТВЕТ АДМИНИСТРАТОРУ
+        // ========================================
+
+        res.json({
+            success: true,
+            message: "PIN сброшен",
+            user: {
+                id: user.id,
+                name: user.name,
+                phone: user.phone
+            },
+            oneTimePin: oneTimePin
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка сброса PIN:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
+// УСТАНОВКА НОВОГО PIN
+// ========================================
+//
+// Используется после входа по одноразовому коду.
+//
+// Клиент передаёт:
+//
+// {
+//     "phone": "...",
+//     "newPin": "1234"
+// }
+//
+// Одноразовый код уже был использован
+// при входе, поэтому здесь достаточно
+// установить новый постоянный PIN.
+//
+// После установки:
+// one_time_pin = NULL
+// one_time_pin_used = 0
+// ========================================
+
+app.post("/set-new-pin", (req, res) => {
+
+    const {
+        phone,
+        newPin
+    } = req.body;
+
+    if (!phone || !newPin) {
+        return res.status(400).json({
+            success: false,
+            message: "Укажите номер телефона и новый PIN-код"
+        });
+    }
+
+    if (!/^\d{4}$/.test(String(newPin))) {
+        return res.status(400).json({
+            success: false,
+            message: "PIN-код должен содержать 4 цифры"
+        });
+    }
+
+    try {
+
+        const user = db.prepare(`
+            SELECT
+                id,
+                phone,
+                one_time_pin,
+                one_time_pin_used
+            FROM users
+            WHERE phone = ?
+        `).get(phone);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "Пользователь не найден"
+            });
+        }
+
+        // ========================================
+        // НОВЫЙ PIN МОЖНО УСТАНОВИТЬ ТОЛЬКО
+        // ПОСЛЕ ИСПОЛЬЗОВАНИЯ ОДНОРАЗОВОГО КОДА
+        // ========================================
+
+        if (
+            !user.one_time_pin ||
+            user.one_time_pin_used !== 1
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "Сначала войдите по одноразовому коду"
+            });
+        }
+
+        // ========================================
+        // СОХРАНЯЕМ НОВЫЙ PIN
+        // ========================================
+
+        db.prepare(`
+            UPDATE users
+            SET
+                pin = ?,
+                one_time_pin = NULL,
+                one_time_pin_used = 0
+            WHERE id = ?
+        `).run(
+            String(newPin),
+            user.id
+        );
+
+        console.log(
+            `Пользователь ${user.phone} установил новый PIN`
+        );
+
+        res.json({
+            success: true,
+            message: "Новый PIN-код установлен"
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка установки нового PIN:",
+            error
+        );
 
         res.status(500).json({
             success: false,
@@ -218,6 +662,7 @@ app.post("/login", (req, res) => {
 app.post("/test-bonus/:userId", (req, res) => {
 
     const { userId } = req.params;
+
     const amount = 50;
 
     try {
@@ -226,7 +671,10 @@ app.post("/test-bonus/:userId", (req, res) => {
             UPDATE users
             SET bonus = bonus + ?
             WHERE id = ?
-        `).run(amount, userId);
+        `).run(
+            amount,
+            userId
+        );
 
         if (result.changes === 0) {
             return res.status(404).json({
@@ -272,22 +720,19 @@ app.post("/test-bonus/:userId", (req, res) => {
 // ОПЛАТА БОНУСАМИ
 // ========================================
 //
-// Сейчас тестируем:
-// 20 сом = 2 импульса
-//
-// Формула:
 // 10 сом = 1 импульс
-//
-// Поэтому:
 // 20 сом = 2 импульса
 // 50 сом = 5 импульсов
 // 100 сом = 10 импульсов
-//
 // ========================================
 
 app.post("/pay-bonus", (req, res) => {
 
-    const { userId, post, amount } = req.body;
+    const {
+        userId,
+        post,
+        amount
+    } = req.body;
 
     if (!userId || !post || !amount) {
         return res.status(400).json({
@@ -325,7 +770,9 @@ app.post("/pay-bonus", (req, res) => {
         // РАССЧИТЫВАЕМ ИМПУЛЬСЫ
         // ========================================
 
-        const coins = Math.floor(Number(amount) / 10);
+        const coins = Math.floor(
+            Number(amount) / 10
+        );
 
         if (coins < 1) {
             return res.status(400).json({
@@ -348,7 +795,7 @@ app.post("/pay-bonus", (req, res) => {
         );
 
         // ========================================
-        // СОЗДАЁМ КОМАНДУ ДЛЯ ESP32
+        // СОЗДАЁМ КОМАНДУ ESP32
         // ========================================
 
         const createdAt = new Date().toISOString();
@@ -368,7 +815,8 @@ app.post("/pay-bonus", (req, res) => {
             createdAt
         );
 
-        const commandId = Number(command.lastInsertRowid);
+        const commandId =
+            Number(command.lastInsertRowid);
 
         console.log(
             `Оплата бонусами: пользователь ${userId}, пост ${post}, сумма ${amount}, импульсов ${coins}, команда ${commandId}`
@@ -408,7 +856,10 @@ app.post("/pay-bonus", (req, res) => {
 
 app.post("/create-payment", (req, res) => {
 
-    const { post, amount } = req.body;
+    const {
+        post,
+        amount
+    } = req.body;
 
     if (!post || !amount) {
         return res.status(400).json({
@@ -423,7 +874,8 @@ app.post("/create-payment", (req, res) => {
         "-" +
         Math.floor(Math.random() * 1000);
 
-    const createdAt = new Date().toISOString();
+    const createdAt =
+        new Date().toISOString();
 
     try {
 
@@ -486,7 +938,9 @@ app.post("/create-payment", (req, res) => {
 
 app.get("/payment-status/:paymentId", (req, res) => {
 
-    const { paymentId } = req.params;
+    const {
+        paymentId
+    } = req.params;
 
     try {
 
@@ -537,7 +991,9 @@ app.get("/payment-status/:paymentId", (req, res) => {
 
 app.post("/test-pay/:paymentId", (req, res) => {
 
-    const { paymentId } = req.params;
+    const {
+        paymentId
+    } = req.params;
 
     try {
 
@@ -568,7 +1024,8 @@ app.post("/test-pay/:paymentId", (req, res) => {
             Number(payment.amount) / 10
         );
 
-        const createdAt = new Date().toISOString();
+        const createdAt =
+            new Date().toISOString();
 
         const command = db.prepare(`
             INSERT INTO esp32_commands
@@ -585,9 +1042,8 @@ app.post("/test-pay/:paymentId", (req, res) => {
             createdAt
         );
 
-        const commandId = Number(
-            command.lastInsertRowid
-        );
+        const commandId =
+            Number(command.lastInsertRowid);
 
         console.log(
             `Платёж подтверждён: ${paymentId}, пост ${payment.post}, сумма ${payment.amount}, импульсов ${coins}, команда ${commandId}`
@@ -619,20 +1075,17 @@ app.post("/test-pay/:paymentId", (req, res) => {
 // ESP32 ПОЛУЧАЕТ КОМАНДУ
 // ========================================
 //
-// ESP32 обращается:
-//
+// ESP32:
 // /esp32/command?post=1
 //
-// Сервер отдаёт первую pending-команду
-// для указанного поста.
-//
-// После выдачи команда становится sent,
-// чтобы ESP32 не получил её повторно.
+// Сервер отдаёт первую pending-команду.
+// После выдачи команда становится sent.
 // ========================================
 
 app.get("/esp32/command", (req, res) => {
 
-    const post = Number(req.query.post);
+    const post =
+        Number(req.query.post);
 
     if (!post) {
         return res.status(400).json({
@@ -776,7 +1229,9 @@ app.get("/esp32/commands", (req, res) => {
 
 app.get("/test-pay/:paymentId", (req, res) => {
 
-    const { paymentId } = req.params;
+    const {
+        paymentId
+    } = req.params;
 
     try {
 
@@ -807,7 +1262,8 @@ app.get("/test-pay/:paymentId", (req, res) => {
             Number(payment.amount) / 10
         );
 
-        const createdAt = new Date().toISOString();
+        const createdAt =
+            new Date().toISOString();
 
         const command = db.prepare(`
             INSERT INTO esp32_commands
@@ -824,9 +1280,8 @@ app.get("/test-pay/:paymentId", (req, res) => {
             createdAt
         );
 
-        const commandId = Number(
-            command.lastInsertRowid
-        );
+        const commandId =
+            Number(command.lastInsertRowid);
 
         console.log(
             `Платёж подтверждён через браузер: ${paymentId}, импульсов ${coins}, команда ${commandId}`
@@ -858,13 +1313,33 @@ app.get("/test-pay/:paymentId", (req, res) => {
 // ЗАПУСК СЕРВЕРА
 // ========================================
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+    process.env.PORT || 3000;
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
 
-    console.log("=================================");
-    console.log("База WashQR готова.");
-    console.log("WashQR Server запущен");
-    console.log("Порт:", PORT);
-    console.log("=================================");
-});
+        console.log(
+            "================================="
+        );
+
+        console.log(
+            "База WashQR готова."
+        );
+
+        console.log(
+            "WashQR Server запущен"
+        );
+
+        console.log(
+            "Порт:",
+            PORT
+        );
+
+        console.log(
+            "================================="
+        );
+    }
+);

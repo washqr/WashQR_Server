@@ -23,7 +23,9 @@ db.prepare(`
         pin TEXT NOT NULL,
         balance REAL DEFAULT 0,
         bonus REAL DEFAULT 0,
-        role TEXT NOT NULL DEFAULT 'user'
+        role TEXT NOT NULL DEFAULT 'user',
+        one_time_pin TEXT,
+        one_time_pin_used INTEGER NOT NULL DEFAULT 0
     )
 `).run();
 
@@ -38,6 +40,40 @@ try {
     `).run();
 
     console.log("Поле role добавлено в таблицу users");
+} catch (error) {
+    if (!String(error.message).includes("duplicate column name")) {
+        throw error;
+    }
+}
+
+// ========================================
+// ДОБАВЛЯЕМ ONE_TIME_PIN В СТАРУЮ БАЗУ
+// ========================================
+
+try {
+    db.prepare(`
+        ALTER TABLE users
+        ADD COLUMN one_time_pin TEXT
+    `).run();
+
+    console.log("Поле one_time_pin добавлено");
+} catch (error) {
+    if (!String(error.message).includes("duplicate column name")) {
+        throw error;
+    }
+}
+
+// ========================================
+// ДОБАВЛЯЕМ ONE_TIME_PIN_USED В СТАРУЮ БАЗУ
+// ========================================
+
+try {
+    db.prepare(`
+        ALTER TABLE users
+        ADD COLUMN one_time_pin_used INTEGER NOT NULL DEFAULT 0
+    `).run();
+
+    console.log("Поле one_time_pin_used добавлено");
 } catch (error) {
     if (!String(error.message).includes("duplicate column name")) {
         throw error;
@@ -72,6 +108,8 @@ db.prepare(`
     )
 `).run();
 
-console.log("Таблицы users, payments и esp32_commands готовы");
+console.log(
+    "Таблицы users, payments и esp32_commands готовы"
+);
 
 module.exports = db;
