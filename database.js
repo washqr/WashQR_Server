@@ -22,9 +22,27 @@ db.prepare(`
         phone TEXT NOT NULL UNIQUE,
         pin TEXT NOT NULL,
         balance REAL DEFAULT 0,
-        bonus REAL DEFAULT 0
+        bonus REAL DEFAULT 0,
+        role TEXT NOT NULL DEFAULT 'user'
     )
 `).run();
+
+// ========================================
+// ДОБАВЛЯЕМ ROLE В СТАРУЮ БАЗУ
+// ========================================
+
+try {
+    db.prepare(`
+        ALTER TABLE users
+        ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
+    `).run();
+
+    console.log("Поле role добавлено в таблицу users");
+} catch (error) {
+    if (!String(error.message).includes("duplicate column name")) {
+        throw error;
+    }
+}
 
 // ========================================
 // ТАБЛИЦА ПЛАТЕЖЕЙ
