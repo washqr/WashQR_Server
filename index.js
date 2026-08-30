@@ -1433,6 +1433,859 @@ app.get("/test-pay/:paymentId", (req, res) => {
 });
 
 // ========================================
+// FAKE BANK — ВРЕМЕННАЯ ИМИТАЦИЯ MBANK
+// ========================================
+//
+// Используется только для тестирования.
+//
+// Фиксированные суммы:
+// 20 сом  = 2 импульса
+// 50 сом  = 5 импульсов
+// 100 сом = 10 импульсов
+// 200 сом = 20 импульсов
+//
+// Схема:
+//
+// FakeBank
+//    ↓
+// WashQR Server
+//    ↓
+// payment = paid
+//    ↓
+// esp32_commands
+//    ↓
+// ESP32
+//
+// ========================================
+
+
+// ----------------------------------------
+// СТРАНИЦА FAKE BANK
+// ----------------------------------------
+
+app.get("/fake-bank", (req, res) => {
+
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="ru">
+
+        <head>
+
+            <meta charset="UTF-8">
+
+            <meta name="viewport"
+                  content="width=device-width, initial-scale=1.0">
+
+            <title>FakeBank — WashQR</title>
+
+            <style>
+
+                body {
+                    margin: 0;
+                    padding: 20px;
+
+                    font-family: Arial, sans-serif;
+
+                    background:
+                        linear-gradient(
+                            135deg,
+                            #0D47A1,
+                            #1976D2
+                        );
+
+                    min-height: 100vh;
+                }
+
+                .container {
+                    max-width: 500px;
+                    margin: auto;
+                }
+
+                .header {
+                    background: white;
+
+                    padding: 25px;
+
+                    border-radius: 20px;
+
+                    text-align: center;
+
+                    margin-bottom: 20px;
+                }
+
+                .header h1 {
+                    margin: 0;
+
+                    color: #0D47A1;
+
+                    font-size: 32px;
+                }
+
+                .header p {
+                    color: #666;
+
+                    margin-bottom: 0;
+                }
+
+                .card {
+                    background: white;
+
+                    border-radius: 20px;
+
+                    padding: 20px;
+
+                    margin-bottom: 15px;
+
+                    box-shadow:
+                        0 5px 20px
+                        rgba(0,0,0,0.2);
+                }
+
+                .card h2 {
+                    margin-top: 0;
+
+                    color: #222;
+                }
+
+                input {
+                    width: 100%;
+
+                    box-sizing: border-box;
+
+                    padding: 14px;
+
+                    border: 1px solid #ddd;
+
+                    border-radius: 10px;
+
+                    font-size: 16px;
+
+                    margin-bottom: 15px;
+                }
+
+                button {
+                    width: 100%;
+
+                    border: none;
+
+                    padding: 16px;
+
+                    border-radius: 12px;
+
+                    background: #1976D2;
+
+                    color: white;
+
+                    font-size: 18px;
+
+                    font-weight: bold;
+
+                    cursor: pointer;
+                }
+
+                button:hover {
+                    background: #0D47A1;
+                }
+
+                .amount {
+                    font-size: 26px;
+
+                    font-weight: bold;
+
+                    color: #0D47A1;
+
+                    margin-bottom: 15px;
+                }
+
+                .result {
+                    display: none;
+
+                    background: #E8F5E9;
+
+                    color: #2E7D32;
+
+                    padding: 20px;
+
+                    border-radius: 15px;
+
+                    margin-top: 20px;
+
+                    line-height: 1.7;
+                }
+
+                .error {
+                    display: none;
+
+                    background: #FFEBEE;
+
+                    color: #C62828;
+
+                    padding: 20px;
+
+                    border-radius: 15px;
+
+                    margin-top: 20px;
+                }
+
+            </style>
+
+        </head>
+
+        <body>
+
+            <div class="container">
+
+                <div class="header">
+
+                    <h1>🏦 FakeBank</h1>
+
+                    <p>
+                        Временная имитация MBANK
+                    </p>
+
+                </div>
+
+
+                <div class="card">
+
+                    <h2>Выберите пост</h2>
+
+                    <input
+                        id="post"
+                        type="number"
+                        min="1"
+                        value="1"
+                        placeholder="Номер поста"
+                    >
+
+                </div>
+
+
+                <div class="card">
+
+                    <h2>Выберите сумму</h2>
+
+
+                    <div class="amount">
+                        20 сом
+                    </div>
+
+                    <button
+                        onclick="pay(20)"
+                    >
+                        💳 Оплатить 20 сом
+                    </button>
+
+                </div>
+
+
+                <div class="card">
+
+                    <div class="amount">
+                        50 сом
+                    </div>
+
+                    <button
+                        onclick="pay(50)"
+                    >
+                        💳 Оплатить 50 сом
+                    </button>
+
+                </div>
+
+
+                <div class="card">
+
+                    <div class="amount">
+                        100 сом
+                    </div>
+
+                    <button
+                        onclick="pay(100)"
+                    >
+                        💳 Оплатить 100 сом
+                    </button>
+
+                </div>
+
+
+                <div class="card">
+
+                    <div class="amount">
+                        200 сом
+                    </div>
+
+                    <button
+                        onclick="pay(200)"
+                    >
+                        💳 Оплатить 200 сом
+                    </button>
+
+                </div>
+
+
+                <div
+                    id="result"
+                    class="result"
+                ></div>
+
+
+                <div
+                    id="error"
+                    class="error"
+                ></div>
+
+            </div>
+
+
+            <script>
+
+                async function pay(amount) {
+
+                    const post =
+                        Number(
+                            document.getElementById("post").value
+                        );
+
+                    const result =
+                        document.getElementById("result");
+
+                    const error =
+                        document.getElementById("error");
+
+
+                    result.style.display = "none";
+
+                    error.style.display = "none";
+
+
+                    if (!post || post < 1) {
+
+                        error.innerHTML =
+                            "Введите правильный номер поста.";
+
+                        error.style.display = "block";
+
+                        return;
+                    }
+
+
+                    try {
+
+                        // --------------------------------
+                        // Сначала создаём платёж
+                        // --------------------------------
+
+                        const createResponse =
+                            await fetch(
+                                "/fake-bank/create-payment",
+                                {
+                                    method: "POST",
+
+                                    headers: {
+                                        "Content-Type":
+                                            "application/json"
+                                    },
+
+                                    body: JSON.stringify({
+                                        post: post,
+                                        amount: amount
+                                    })
+                                }
+                            );
+
+
+                        const createData =
+                            await createResponse.json();
+
+
+                        if (!createData.success) {
+
+                            throw new Error(
+                                createData.message ||
+                                "Не удалось создать платёж"
+                            );
+                        }
+
+
+                        const paymentId =
+                            createData.payment.id;
+
+
+                        // --------------------------------
+                        // Имитируем успешную оплату банка
+                        // --------------------------------
+
+                        const payResponse =
+                            await fetch(
+                                "/fake-bank/pay/" +
+                                paymentId,
+                                {
+                                    method: "POST",
+
+                                    headers: {
+                                        "Content-Type":
+                                            "application/json"
+                                    }
+                                }
+                            );
+
+
+                        const payData =
+                            await payResponse.json();
+
+
+                        if (!payData.success) {
+
+                            throw new Error(
+                                payData.message ||
+                                "Ошибка оплаты"
+                            );
+                        }
+
+
+                        // --------------------------------
+                        // Показываем результат
+                        // --------------------------------
+
+                        result.innerHTML =
+
+                            "✅ <strong>Платёж подтверждён</strong><br><br>" +
+
+                            "ID платежа: " +
+                            payData.payment.id +
+                            "<br>" +
+
+                            "Пост: " +
+                            payData.payment.post +
+                            "<br>" +
+
+                            "Сумма: " +
+                            payData.payment.amount +
+                            " сом<br>" +
+
+                            "Импульсов ESP32: " +
+                            payData.coins +
+                            "<br>" +
+
+                            "Команда ESP32: №" +
+                            payData.commandId;
+
+
+                        result.style.display = "block";
+
+
+                    } catch (err) {
+
+                        error.innerHTML =
+                            "❌ " + err.message;
+
+                        error.style.display = "block";
+
+                    }
+
+                }
+
+            </script>
+
+        </body>
+
+        </html>
+    `);
+});
+
+
+// ----------------------------------------
+// FAKE BANK — СОЗДАНИЕ ПЛАТЕЖА
+// ----------------------------------------
+
+app.post("/fake-bank/create-payment", (req, res) => {
+
+    const {
+        post,
+        amount
+    } = req.body;
+
+
+    const allowedAmounts = [
+        20,
+        50,
+        100,
+        200
+    ];
+
+
+    const numericPost =
+        Number(post);
+
+    const numericAmount =
+        Number(amount);
+
+
+    if (
+        !numericPost ||
+        numericPost < 1
+    ) {
+
+        return res.status(400).json({
+            success: false,
+            message: "Неверный номер поста"
+        });
+    }
+
+
+    if (
+        !allowedAmounts.includes(
+            numericAmount
+        )
+    ) {
+
+        return res.status(400).json({
+            success: false,
+            message:
+                "Разрешены только суммы 20, 50, 100 и 200 сом"
+        });
+    }
+
+
+    const paymentId =
+        "FAKE-" +
+        Date.now() +
+        "-" +
+        Math.floor(
+            Math.random() * 1000
+        );
+
+
+    const createdAt =
+        new Date().toISOString();
+
+
+    try {
+
+        db.prepare(`
+            INSERT INTO payments
+            (
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            paymentId,
+            numericPost,
+            numericAmount,
+            "pending",
+            createdAt
+        );
+
+
+        const payment =
+            db.prepare(`
+                SELECT
+                    id,
+                    post,
+                    amount,
+                    status,
+                    created_at
+                FROM payments
+                WHERE id = ?
+            `).get(paymentId);
+
+
+        console.log(
+            "FakeBank создал платёж:",
+            payment
+        );
+
+
+        res.json({
+            success: true,
+            payment: payment
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка FakeBank:",
+            error
+        );
+
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка создания тестового платежа"
+        });
+
+    }
+
+});
+
+
+// ----------------------------------------
+// FAKE BANK — ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА
+// ----------------------------------------
+
+app.post("/fake-bank/pay/:paymentId", (req, res) => {
+
+    const {
+        paymentId
+    } = req.params;
+
+
+    try {
+
+        const payment =
+            db.prepare(`
+                SELECT
+                    *
+                FROM payments
+                WHERE id = ?
+            `).get(paymentId);
+
+
+        if (!payment) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Платёж не найден"
+            });
+
+        }
+
+
+        // --------------------------------
+        // Защита от повторной оплаты
+        // --------------------------------
+
+        if (
+            payment.status === "paid"
+        ) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Этот платёж уже подтверждён"
+            });
+
+        }
+
+
+        // --------------------------------
+        // Проверяем сумму
+        // --------------------------------
+
+        const allowedAmounts = [
+            20,
+            50,
+            100,
+            200
+        ];
+
+
+        if (
+            !allowedAmounts.includes(
+                Number(payment.amount)
+            )
+        ) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Недопустимая сумма платежа"
+            });
+
+        }
+
+
+        // --------------------------------
+        // Подтверждаем платёж
+        // --------------------------------
+
+        db.prepare(`
+            UPDATE payments
+            SET status = 'paid'
+            WHERE id = ?
+        `).run(
+            paymentId
+        );
+
+
+        // --------------------------------
+        // Рассчитываем импульсы
+        //
+        // 10 сом = 1 импульс
+        // --------------------------------
+
+        const coins =
+            Math.floor(
+                Number(payment.amount) / 10
+            );
+
+
+        // --------------------------------
+        // Создаём команду для ESP32
+        // --------------------------------
+
+        const createdAt =
+            new Date().toISOString();
+
+
+        const command =
+            db.prepare(`
+                INSERT INTO esp32_commands
+                (
+                    post,
+                    coins,
+                    status,
+                    created_at
+                )
+                VALUES (?, ?, 'pending', ?)
+            `).run(
+                payment.post,
+                coins,
+                createdAt
+            );
+
+
+        const commandId =
+            Number(
+                command.lastInsertRowid
+            );
+
+
+        console.log(
+            "================================="
+        );
+
+        console.log(
+            "FAKE BANK: ПЛАТЁЖ ПОДТВЕРЖДЁН"
+        );
+
+        console.log(
+            "Payment:",
+            payment.id
+        );
+
+        console.log(
+            "Post:",
+            payment.post
+        );
+
+        console.log(
+            "Amount:",
+            payment.amount,
+            "сом"
+        );
+
+        console.log(
+            "ESP32 impulses:",
+            coins
+        );
+
+        console.log(
+            "ESP32 command:",
+            commandId
+        );
+
+        console.log(
+            "================================="
+        );
+
+
+        // --------------------------------
+        // Ответ
+        // --------------------------------
+
+        res.json({
+
+            success: true,
+
+            message:
+                "FakeBank подтвердил платёж",
+
+            payment: {
+                id: payment.id,
+
+                post: payment.post,
+
+                amount: payment.amount,
+
+                status: "paid"
+            },
+
+            coins: coins,
+
+            commandId: commandId
+
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка подтверждения FakeBank:",
+            error
+        );
+
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+
+    }
+
+});
+
+
+// ----------------------------------------
+// FAKE BANK — ИНФОРМАЦИЯ О СИСТЕМЕ
+// ----------------------------------------
+
+app.get("/fake-bank/info", (req, res) => {
+
+    res.json({
+
+        success: true,
+
+        bank: "FakeBank",
+
+        mode: "TEST",
+
+        message:
+            "Временная имитация MBANK",
+
+        fixedAmounts: [
+            20,
+            50,
+            100,
+            200
+        ],
+
+        impulseRate:
+            "10 сом = 1 импульс",
+
+        amounts: {
+
+            "20": 2,
+
+            "50": 5,
+
+            "100": 10,
+
+            "200": 20
+
+        }
+
+    });
+
+});
+
+// ========================================
 // ЗАПУСК СЕРВЕРА
 // ========================================
 
