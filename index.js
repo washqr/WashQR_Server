@@ -1195,6 +1195,196 @@ app.post("/test-pay/:paymentId", (req, res) => {
 });
 
 // ========================================
+// АДМИН — РУЧНОЙ ЗАПУСК ПОСТА
+// ========================================
+//
+// Администратор передаёт:
+//
+// {
+//     "adminPhone": "номер администратора",
+//     "post": 1,
+//     "amount": 30
+// }
+//
+// 10 сом = 1 импульс
+//
+// Пост 1 → ESP32 → GPIO2
+// Пост 2 → ESP32 → GPIO15
+//
+// ========================================
+
+app.post("/admin/manual-post", (req, res) => {
+
+    const {
+        adminPhone,
+        post,
+        amount
+    } = req.body;
+
+    // ----------------------------------------
+    // ПРОВЕРКА ДАННЫХ
+    // ----------------------------------------
+
+    if (!adminPhone || !post || amount === undefined) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан администратор, пост или сумма"
+        });
+    }
+
+    const postNumber = Number(post);
+    const sum = Number(amount);
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ ПОСТ
+    // ----------------------------------------
+
+    if (postNumber !== 1 && postNumber !== 2) {
+        return res.status(400).json({
+            success: false,
+            message: "Можно выбрать только Пост 1 или Пост 2"
+        });
+    }
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ СУММУ
+    // ----------------------------------------
+
+    if (!Number.isFinite(sum) || sum <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Введите корректную сумму"
+        });
+    }
+
+    // Сумма должна быть кратна 10
+    if (sum % 10 !== 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Сумма должна быть кратна 10 сомам"
+        });
+    }
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ АДМИНИСТРАТОРА
+    // ----------------------------------------
+
+    try {
+
+        const admin = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(adminPhone);
+
+        if (!admin || admin.role !== "admin") {
+            return res.status(403).json({
+                success: false,
+                message: "Доступ запрещён"
+            });
+        }
+
+        // ----------------------------------------
+        // РАССЧИТЫВАЕМ ИМПУЛЬСЫ
+        // ----------------------------------------
+
+        const coins = Math.floor(sum / 10);
+
+        // ----------------------------------------
+        // СОЗДАЁМ КОМАНДУ ДЛЯ ESP32
+        // ----------------------------------------
+
+        const createdAt = new Date().toISOString();
+
+        const command = db.prepare(`
+            INSERT INTO esp32_commands
+            (
+                post,
+                coins,
+                status,
+                created_at
+            )
+            VALUES (?, ?, 'pending', ?)
+        `).run(
+            postNumber,
+            coins,
+            createdAt
+        );
+
+        const commandId =
+            Number(command.lastInsertRowid);
+
+        console.log(
+            "================================="
+        );
+
+        console.log(
+            "АДМИН — РУЧНОЙ ЗАПУСК ПОСТА"
+        );
+
+        console.log(
+            "Администратор:",
+            admin.phone
+        );
+
+        console.log(
+            "Пост:",
+            postNumber
+        );
+
+        console.log(
+            "Сумма:",
+            sum,
+            "сом"
+        );
+
+        console.log(
+            "Импульсов:",
+            coins
+        );
+
+        console.log(
+            "Команда:",
+            commandId
+        );
+
+        console.log(
+            "================================="
+        );
+
+        // ----------------------------------------
+        // ОТВЕТ
+        // ----------------------------------------
+
+        res.json({
+            success: true,
+            message:
+                `Пост ${postNumber} запущен`,
+            post: postNumber,
+            amount: sum,
+            coins: coins,
+            commandId: commandId
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка ручного запуска поста:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
 // ESP32 ПОЛУЧАЕТ КОМАНДУ
 // ========================================
 //
