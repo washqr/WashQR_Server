@@ -1395,6 +1395,209 @@ app.post("/admin/manual-post", (req, res) => {
 // После выдачи команда становится sent.
 // ========================================
 
+// ========================================
+// РУЧНОЙ ЗАПУСК ПОСТА АДМИНИСТРАТОРОМ
+// ========================================
+//
+// Администратор указывает:
+// - пост
+// - сумму
+//
+// 10 сом = 1 импульс
+//
+// Пост 1 → GPIO2
+// Пост 2 → GPIO15
+//
+// Команда записывается в esp32_commands.
+// ESP32 забирает её через /esp32/command
+// ========================================
+
+app.post("/admin/manual-post", (req, res) => {
+
+    const {
+        adminPhone,
+        post,
+        amount
+    } = req.body;
+
+    // ----------------------------------------
+    // ПРОВЕРКА ДАННЫХ
+    // ----------------------------------------
+
+    if (!adminPhone || post === undefined || amount === undefined) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан администратор, пост или сумма"
+        });
+    }
+
+    const numericPost = Number(post);
+    const numericAmount = Number(amount);
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ ПОСТ
+    // ----------------------------------------
+
+    if (numericPost !== 1 && numericPost !== 2) {
+        return res.status(400).json({
+            success: false,
+            message: "Неверный номер поста"
+        });
+    }
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ СУММУ
+    // ----------------------------------------
+
+    if (
+        !Number.isFinite(numericAmount) ||
+        numericAmount < 10
+    ) {
+        return res.status(400).json({
+            success: false,
+            message: "Минимальная сумма — 10 сом"
+        });
+    }
+
+    // Сумма должна быть кратна 10
+    if (numericAmount % 10 !== 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Сумма должна быть кратна 10 сом"
+        });
+    }
+
+    try {
+
+        // ----------------------------------------
+        // ПРОВЕРЯЕМ АДМИНИСТРАТОРА
+        // ----------------------------------------
+
+        const admin = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(adminPhone);
+
+        if (!admin || admin.role !== "admin") {
+            return res.status(403).json({
+                success: false,
+                message: "Доступ запрещён"
+            });
+        }
+
+        // ----------------------------------------
+        // РАССЧИТЫВАЕМ ИМПУЛЬСЫ
+        // ----------------------------------------
+
+        const coins = Math.floor(
+            numericAmount / 10
+        );
+
+        // ----------------------------------------
+        // СОЗДАЁМ ID ПЛАТЕЖА
+        // ----------------------------------------
+
+        const paymentId =
+            "ADMIN-" +
+            Date.now() +
+            "-" +
+            Math.floor(
+                Math.random() * 1000
+            );
+
+        const createdAt =
+            new Date().toISOString();
+
+        // ----------------------------------------
+        // СОХРАНЯЕМ В ИСТОРИЮ ПЛАТЕЖЕЙ
+        // ----------------------------------------
+
+        db.prepare(`
+            INSERT INTO payments
+            (
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            paymentId,
+            numericPost,
+            numericAmount,
+            "paid",
+            createdAt
+        );
+
+        // ----------------------------------------
+        // СОЗДАЁМ КОМАНДУ ДЛЯ ESP32
+        // ----------------------------------------
+
+        const command = db.prepare(`
+            INSERT INTO esp32_commands
+            (
+                post,
+                coins,
+                status,
+                created_at
+            )
+            VALUES (?, ?, 'pending', ?)
+        `).run(
+            numericPost,
+            coins,
+            createdAt
+        );
+
+        const commandId =
+            Number(command.lastInsertRowid);
+
+        // ----------------------------------------
+        // ЛОГ
+        // ----------------------------------------
+
+        console.log(
+            `АДМИН ${admin.phone}: пост ${numericPost}, сумма ${numericAmount} сом, импульсов ${coins}, команда ${commandId}`
+        );
+
+        // ----------------------------------------
+        // ОТВЕТ ПРИЛОЖЕНИЮ
+        // ----------------------------------------
+
+        res.json({
+            success: true,
+            message: "Пост успешно запущен",
+
+            paymentId: paymentId,
+
+            post: numericPost,
+
+            amount: numericAmount,
+
+            coins: coins,
+
+            commandId: commandId
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка ручного запуска поста:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
 app.get("/esp32/command", (req, res) => {
 
     const post =
