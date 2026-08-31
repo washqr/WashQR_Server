@@ -95,6 +95,23 @@ db.prepare(`
 `).run();
 
 // ========================================
+// ИСТОРИЯ ОПЛАТ БОНУСАМИ
+// ========================================
+
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS bonus_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        user_name TEXT NOT NULL,
+        user_phone TEXT NOT NULL,
+        post INTEGER NOT NULL,
+        amount INTEGER NOT NULL,
+        coins INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    )
+`).run();
+
+// ========================================
 // КОМАНДЫ ДЛЯ ESP32
 // ========================================
 

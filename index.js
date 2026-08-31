@@ -849,6 +849,20 @@ app.post("/test-bonus/:userId", (req, res) => {
 // 100 сом = 10 импульсов
 // ========================================
 
+// ========================================
+// ОПЛАТА БОНУСАМИ
+// ========================================
+//
+// 1 бонус = 1 сом
+// 10 сом = 1 импульс
+//
+// Одновременно:
+// 1. списываем бонусы клиента
+// 2. сохраняем историю оплаты
+// 3. создаём команду для ESP32
+//
+// ========================================
+
 app.post("/pay-bonus", (req, res) => {
 
     const {
@@ -857,23 +871,69 @@ app.post("/pay-bonus", (req, res) => {
         amount
     } = req.body;
 
-    if (!userId || !post || !amount) {
+    // ========================================
+    // ПРОВЕРКА ДАННЫХ
+    // ========================================
+
+    if (!userId || !post || amount === undefined || amount === null) {
         return res.status(400).json({
             success: false,
             message: "Не указан пользователь, пост или сумма"
         });
     }
 
+    const numericUserId = Number(userId);
+    const numericPost = Number(post);
+    const numericAmount = Number(amount);
+
+    if (!Number.isInteger(numericUserId) || numericUserId <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Некорректный пользователь"
+        });
+    }
+
+    if (numericPost !== 1 && numericPost !== 2) {
+        return res.status(400).json({
+            success: false,
+            message: "Можно выбрать только Пост 1 или Пост 2"
+        });
+    }
+
+    if (
+        !Number.isFinite(numericAmount) ||
+        numericAmount <= 0
+    ) {
+        return res.status(400).json({
+            success: false,
+            message: "Некорректная сумма"
+        });
+    }
+
+    // Сумма должна давать целое количество импульсов
+    if (numericAmount % 10 !== 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Сумма должна быть кратна 10 сомам"
+        });
+    }
+
     try {
+
+        // ========================================
+        // ИЩЕМ КЛИЕНТА
+        // ========================================
 
         const user = db.prepare(`
             SELECT
                 id,
                 name,
-                bonus
+                phone,
+                bonus,
+                role
             FROM users
             WHERE id = ?
-        `).get(userId);
+        `).get(numericUserId);
 
         if (!user) {
             return res.status(404).json({
@@ -882,7 +942,19 @@ app.post("/pay-bonus", (req, res) => {
             });
         }
 
-        if (user.bonus < amount) {
+        // Администратор не оплачивает бонусами
+        if (user.role === "admin") {
+            return res.status(400).json({
+                success: false,
+                message: "Администратор не может оплачивать бонусами"
+            });
+        }
+
+        // ========================================
+        // ПРОВЕРЯЕМ БОНУСЫ
+        // ========================================
+
+        if (Number(user.bonus) < numericAmount) {
             return res.status(400).json({
                 success: false,
                 message: "Недостаточно бонусов"
@@ -893,9 +965,8 @@ app.post("/pay-bonus", (req, res) => {
         // РАССЧИТЫВАЕМ ИМПУЛЬСЫ
         // ========================================
 
-        const coins = Math.floor(
-            Number(amount) / 10
-        );
+        const coins =
+            Math.floor(numericAmount / 10);
 
         if (coins < 1) {
             return res.status(400).json({
@@ -903,6 +974,13 @@ app.post("/pay-bonus", (req, res) => {
                 message: "Сумма слишком маленькая для импульса"
             });
         }
+
+        // ========================================
+        // ВРЕМЯ ОПЕРАЦИИ
+        // ========================================
+
+        const createdAt =
+            new Date().toISOString();
 
         // ========================================
         // СПИСЫВАЕМ БОНУСЫ
@@ -913,15 +991,42 @@ app.post("/pay-bonus", (req, res) => {
             SET bonus = bonus - ?
             WHERE id = ?
         `).run(
-            amount,
-            userId
+            numericAmount,
+            numericUserId
         );
+
+        // ========================================
+        // СОХРАНЯЕМ ИСТОРИЮ ОПЛАТЫ
+        // ========================================
+
+        const history = db.prepare(`
+            INSERT INTO bonus_payments
+            (
+                user_id,
+                user_name,
+                user_phone,
+                post,
+                amount,
+                coins,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            user.id,
+            user.name,
+            user.phone,
+            numericPost,
+            numericAmount,
+            coins,
+            createdAt
+        );
+
+        const historyId =
+            Number(history.lastInsertRowid);
 
         // ========================================
         // СОЗДАЁМ КОМАНДУ ESP32
         // ========================================
-
-        const createdAt = new Date().toISOString();
 
         const command = db.prepare(`
             INSERT INTO esp32_commands
@@ -933,7 +1038,7 @@ app.post("/pay-bonus", (req, res) => {
             )
             VALUES (?, ?, 'pending', ?)
         `).run(
-            post,
+            numericPost,
             coins,
             createdAt
         );
@@ -941,8 +1046,70 @@ app.post("/pay-bonus", (req, res) => {
         const commandId =
             Number(command.lastInsertRowid);
 
+        // ========================================
+        // ПОЛУЧАЕМ НОВЫЙ БАЛАНС БОНУСОВ
+        // ========================================
+
+        const updatedUser = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                bonus
+            FROM users
+            WHERE id = ?
+        `).get(numericUserId);
+
+        // ========================================
+        // ЛОГ
+        // ========================================
+
         console.log(
-            `Оплата бонусами: пользователь ${userId}, пост ${post}, сумма ${amount}, импульсов ${coins}, команда ${commandId}`
+            "================================="
+        );
+
+        console.log(
+            "ОПЛАТА БОНУСАМИ"
+        );
+
+        console.log(
+            "Клиент:",
+            user.name
+        );
+
+        console.log(
+            "Телефон:",
+            user.phone
+        );
+
+        console.log(
+            "Пост:",
+            numericPost
+        );
+
+        console.log(
+            "Сумма:",
+            numericAmount,
+            "сом"
+        );
+
+        console.log(
+            "Импульсов:",
+            coins
+        );
+
+        console.log(
+            "История ID:",
+            historyId
+        );
+
+        console.log(
+            "ESP32 команда:",
+            commandId
+        );
+
+        console.log(
+            "================================="
         );
 
         // ========================================
@@ -951,18 +1118,70 @@ app.post("/pay-bonus", (req, res) => {
 
         res.json({
             success: true,
-            message: "Оплата бонусами выполнена",
-            userId: userId,
-            post: post,
-            amount: amount,
+
+            message:
+                "Оплата бонусами выполнена",
+
+            user: updatedUser,
+
+            post: numericPost,
+
+            amount: numericAmount,
+
             coins: coins,
-            commandId: commandId
+
+            historyId: historyId,
+
+            commandId: commandId,
+
+            createdAt: createdAt
         });
 
     } catch (error) {
 
         console.error(
             "Ошибка оплаты бонусами:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
+// ИСТОРИЯ ОПЛАТ БОНУСАМИ
+// ========================================
+
+app.get("/bonus-payments", (req, res) => {
+
+    try {
+
+        const payments = db.prepare(`
+            SELECT
+                id,
+                user_id,
+                user_name,
+                user_phone,
+                post,
+                amount,
+                coins,
+                created_at
+            FROM bonus_payments
+            ORDER BY id DESC
+        `).all();
+
+        res.json({
+            success: true,
+            payments: payments
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка получения истории бонусов:",
             error
         );
 
