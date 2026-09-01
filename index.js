@@ -130,16 +130,14 @@ app.post("/register", (req, res) => {
         );
 
         const user = db.prepare(`
-            SELECT
-                id,
-                name,
-                phone,
-                balance,
-                bonus,
-                role
-            FROM users
-            WHERE id = ?
-        `).get(result.lastInsertRowid);
+    SELECT
+        id,
+        name,
+        phone,
+        bonus
+    FROM users
+    WHERE id = ?
+`).get(userId);
 
         console.log(
             "Пользователь зарегистрирован:",
@@ -1045,6 +1043,36 @@ app.post("/pay-bonus", (req, res) => {
 
         const commandId =
             Number(command.lastInsertRowid);
+
+// ========================================
+// СОХРАНЯЕМ ОПЛАТУ БОНУСАМИ В ИСТОРИЮ
+// ========================================
+
+db.prepare(`
+    INSERT INTO bonus_payments
+    (
+        user_id,
+        user_name,
+        user_phone,
+        post,
+        amount,
+        coins,
+        created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+`).run(
+    user.id,
+    user.name,
+    user.phone,
+    post,
+    Number(amount),
+    coins,
+    createdAt
+);
+
+console.log(
+    `История бонусов сохранена: ${user.name}, ${user.phone}, пост ${post}, ${amount} сом`
+);
 
         // ========================================
         // ПОЛУЧАЕМ НОВЫЙ БАЛАНС БОНУСОВ
