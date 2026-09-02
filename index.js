@@ -1184,9 +1184,7 @@ console.log(
 // ========================================
 
 app.get("/bonus-payments", (req, res) => {
-
     try {
-
         const payments = db.prepare(`
             SELECT
                 id,
@@ -1209,7 +1207,7 @@ app.get("/bonus-payments", (req, res) => {
     } catch (error) {
 
         console.error(
-            "Ошибка получения истории бонусов:",
+            "Ошибка загрузки истории бонусных оплат:",
             error
         );
 
@@ -1414,6 +1412,36 @@ app.post("/test-pay/:paymentId", (req, res) => {
 
         const commandId =
             Number(command.lastInsertRowid);
+        
+// ========================================
+// СОХРАНЯЕМ ОПЛАТУ БОНУСАМИ В ИСТОРИЮ
+// ========================================
+
+db.prepare(`
+    INSERT INTO bonus_payments
+    (
+        user_id,
+        user_name,
+        user_phone,
+        post,
+        amount,
+        coins,
+        created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+`).run(
+    user.id,
+    user.name,
+    user.phone,
+    post,
+    Number(amount),
+    coins,
+    createdAt
+);
+
+console.log(
+    `История бонусов сохранена: ${user.name}, ${user.phone}, пост ${post}, ${amount} сом`
+);
 
         console.log(
             `Платёж подтверждён: ${paymentId}, пост ${payment.post}, сумма ${payment.amount}, импульсов ${coins}, команда ${commandId}`
