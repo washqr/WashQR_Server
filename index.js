@@ -6,7 +6,6 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-
 // ========================================
 // ГЛАВНАЯ СТРАНИЦА
 // ========================================
@@ -845,8 +844,12 @@ app.post("/test-bonus/:userId", (req, res) => {
 //
 // 10 сом = 1 импульс
 // 20 сом = 2 импульса
-// 50 сом = 5 импульсов
-// 100 сом = 10 импульсов
+// 50 сом // ========================================
+// РћРџР›РђРўРђ Р‘РћРќРЈРЎРђРњР
+// ========================================
+
+// ========================================
+// BONUS PAYMENT
 // ========================================
 
 app.post("/pay-bonus", (req, res) => {
@@ -860,7 +863,7 @@ app.post("/pay-bonus", (req, res) => {
     if (!userId || !post || !amount) {
         return res.status(400).json({
             success: false,
-            message: "Не указан пользователь, пост или сумма"
+            message: "\u041d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c, \u043f\u043e\u0441\u0442 \u0438\u043b\u0438 \u0441\u0443\u043c\u043c\u0430"
         });
     }
 
@@ -870,6 +873,7 @@ app.post("/pay-bonus", (req, res) => {
             SELECT
                 id,
                 name,
+                phone,
                 bonus
             FROM users
             WHERE id = ?
@@ -878,20 +882,16 @@ app.post("/pay-bonus", (req, res) => {
         if (!user) {
             return res.status(404).json({
                 success: false,
-                message: "Пользователь не найден"
+                message: "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d"
             });
         }
 
-        if (user.bonus < amount) {
+        if (Number(user.bonus) < Number(amount)) {
             return res.status(400).json({
                 success: false,
-                message: "Недостаточно бонусов"
+                message: "\u041d\u0435\u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u0431\u043e\u043d\u0443\u0441\u043e\u0432"
             });
         }
-
-        // ========================================
-        // РАССЧИТЫВАЕМ ИМПУЛЬСЫ
-        // ========================================
 
         const coins = Math.floor(
             Number(amount) / 10
@@ -900,12 +900,15 @@ app.post("/pay-bonus", (req, res) => {
         if (coins < 1) {
             return res.status(400).json({
                 success: false,
-                message: "Сумма слишком маленькая для импульса"
+                message: "\u0421\u0443\u043c\u043c\u0430 \u0441\u043b\u0438\u0448\u043a\u043e\u043c \u043c\u0430\u043b\u0435\u043d\u044c\u043a\u0430\u044f \u0434\u043b\u044f \u0438\u043c\u043f\u0443\u043b\u044c\u0441\u0430"
             });
         }
 
+        const createdAt =
+            new Date().toISOString();
+
         // ========================================
-        // СПИСЫВАЕМ БОНУСЫ
+        // SUBTRACT BONUS
         // ========================================
 
         db.prepare(`
@@ -918,10 +921,37 @@ app.post("/pay-bonus", (req, res) => {
         );
 
         // ========================================
-        // СОЗДАЁМ КОМАНДУ ESP32
+        // SAVE BONUS PAYMENT HISTORY
         // ========================================
 
-        const createdAt = new Date().toISOString();
+        const history = db.prepare(`
+            INSERT INTO bonus_payments
+            (
+                user_id,
+                user_name,
+                user_phone,
+                post,
+                amount,
+                coins,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            user.id,
+            user.name,
+            user.phone,
+            post,
+            Number(amount),
+            coins,
+            createdAt
+        );
+
+        const historyId =
+            Number(history.lastInsertRowid);
+
+        // ========================================
+        // CREATE ESP32 COMMAND
+        // ========================================
 
         const command = db.prepare(`
             INSERT INTO esp32_commands
@@ -941,42 +971,94 @@ app.post("/pay-bonus", (req, res) => {
         const commandId =
             Number(command.lastInsertRowid);
 
-        console.log(
-            `Оплата бонусами: пользователь ${userId}, пост ${post}, сумма ${amount}, импульсов ${coins}, команда ${commandId}`
-        );
+        const updatedUser = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                bonus
+            FROM users
+            WHERE id = ?
+        `).get(userId);
 
-        // ========================================
-        // ОТВЕТ
-        // ========================================
+        console.log(
+            "BONUS PAYMENT:",
+            user.name,
+            user.phone,
+            "post",
+            post,
+            "amount",
+            amount,
+            "coins",
+            coins,
+            "history",
+            historyId,
+            "command",
+            commandId
+        );
 
         res.json({
             success: true,
-            message: "Оплата бонусами выполнена",
+            message: "\u041e\u043f\u043b\u0430\u0442\u0430 \u0431\u043e\u043d\u0443\u0441\u0430\u043c\u0438 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0430",
+            user: updatedUser,
             userId: userId,
             post: post,
-            amount: amount,
+            amount: Number(amount),
             coins: coins,
-            commandId: commandId
+            historyId: historyId,
+            commandId: commandId,
+            createdAt: createdAt
         });
 
     } catch (error) {
 
         console.error(
-            "Ошибка оплаты бонусами:",
+            "BONUS PAYMENT ERROR:",
             error
         );
 
         res.status(500).json({
             success: false,
-            message: "Ошибка сервера"
+            message: "\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430"
         });
     }
 });
+app.get("/bonus-payments", (req, res) => {
 
-// ========================================
-// СОЗДАНИЕ ПЛАТЕЖА
-// ========================================
+    try {
 
+        const payments = db.prepare(`
+            SELECT
+                id,
+                user_id,
+                user_name,
+                user_phone,
+                post,
+                amount,
+                coins,
+                created_at
+            FROM bonus_payments
+            ORDER BY id DESC
+        `).all();
+
+        res.json({
+            success: true,
+            payments: payments
+        });
+
+    } catch (error) {
+
+        console.error(
+            "BONUS HISTORY ERROR:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "РћС€РёР±РєР° СЃРµСЂРІРµСЂР°"
+        });
+    }
+});
 app.post("/create-payment", (req, res) => {
 
     const {
@@ -1195,6 +1277,196 @@ app.post("/test-pay/:paymentId", (req, res) => {
 });
 
 // ========================================
+// АДМИН — РУЧНОЙ ЗАПУСК ПОСТА
+// ========================================
+//
+// Администратор передаёт:
+//
+// {
+//     "adminPhone": "номер администратора",
+//     "post": 1,
+//     "amount": 30
+// }
+//
+// 10 сом = 1 импульс
+//
+// Пост 1 → ESP32 → GPIO2
+// Пост 2 → ESP32 → GPIO15
+//
+// ========================================
+
+app.post("/admin/manual-post", (req, res) => {
+
+    const {
+        adminPhone,
+        post,
+        amount
+    } = req.body;
+
+    // ----------------------------------------
+    // ПРОВЕРКА ДАННЫХ
+    // ----------------------------------------
+
+    if (!adminPhone || !post || amount === undefined) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан администратор, пост или сумма"
+        });
+    }
+
+    const postNumber = Number(post);
+    const sum = Number(amount);
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ ПОСТ
+    // ----------------------------------------
+
+    if (postNumber !== 1 && postNumber !== 2) {
+        return res.status(400).json({
+            success: false,
+            message: "Можно выбрать только Пост 1 или Пост 2"
+        });
+    }
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ СУММУ
+    // ----------------------------------------
+
+    if (!Number.isFinite(sum) || sum <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Введите корректную сумму"
+        });
+    }
+
+    // Сумма должна быть кратна 10
+    if (sum % 10 !== 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Сумма должна быть кратна 10 сомам"
+        });
+    }
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ АДМИНИСТРАТОРА
+    // ----------------------------------------
+
+    try {
+
+        const admin = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(adminPhone);
+
+        if (!admin || admin.role !== "admin") {
+            return res.status(403).json({
+                success: false,
+                message: "Доступ запрещён"
+            });
+        }
+
+        // ----------------------------------------
+        // РАССЧИТЫВАЕМ ИМПУЛЬСЫ
+        // ----------------------------------------
+
+        const coins = Math.floor(sum / 10);
+
+        // ----------------------------------------
+        // СОЗДАЁМ КОМАНДУ ДЛЯ ESP32
+        // ----------------------------------------
+
+        const createdAt = new Date().toISOString();
+
+        const command = db.prepare(`
+            INSERT INTO esp32_commands
+            (
+                post,
+                coins,
+                status,
+                created_at
+            )
+            VALUES (?, ?, 'pending', ?)
+        `).run(
+            postNumber,
+            coins,
+            createdAt
+        );
+
+        const commandId =
+            Number(command.lastInsertRowid);
+
+        console.log(
+            "================================="
+        );
+
+        console.log(
+            "АДМИН — РУЧНОЙ ЗАПУСК ПОСТА"
+        );
+
+        console.log(
+            "Администратор:",
+            admin.phone
+        );
+
+        console.log(
+            "Пост:",
+            postNumber
+        );
+
+        console.log(
+            "Сумма:",
+            sum,
+            "сом"
+        );
+
+        console.log(
+            "Импульсов:",
+            coins
+        );
+
+        console.log(
+            "Команда:",
+            commandId
+        );
+
+        console.log(
+            "================================="
+        );
+
+        // ----------------------------------------
+        // ОТВЕТ
+        // ----------------------------------------
+
+        res.json({
+            success: true,
+            message:
+                `Пост ${postNumber} запущен`,
+            post: postNumber,
+            amount: sum,
+            coins: coins,
+            commandId: commandId
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка ручного запуска поста:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+// ========================================
 // ESP32 ПОЛУЧАЕТ КОМАНДУ
 // ========================================
 //
@@ -1203,6 +1475,381 @@ app.post("/test-pay/:paymentId", (req, res) => {
 //
 // Сервер отдаёт первую pending-команду.
 // После выдачи команда становится sent.
+// ========================================
+
+// ========================================
+// РУЧНОЙ ЗАПУСК ПОСТА АДМИНИСТРАТОРОМ
+// ========================================
+//
+// Администратор указывает:
+// - пост
+// - сумму
+//
+// 10 сом = 1 импульс
+//
+// Пост 1 → GPIO2
+// Пост 2 → GPIO15
+//
+// Команда записывается в esp32_commands.
+// ESP32 забирает её через /esp32/command
+// ========================================
+
+app.post("/admin/manual-post", (req, res) => {
+
+    const {
+        adminPhone,
+        post,
+        amount
+    } = req.body;
+
+    // ----------------------------------------
+    // ПРОВЕРКА ДАННЫХ
+    // ----------------------------------------
+
+    if (!adminPhone || post === undefined || amount === undefined) {
+        return res.status(400).json({
+            success: false,
+            message: "Не указан администратор, пост или сумма"
+        });
+    }
+
+    const numericPost = Number(post);
+    const numericAmount = Number(amount);
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ ПОСТ
+    // ----------------------------------------
+
+    if (numericPost !== 1 && numericPost !== 2) {
+        return res.status(400).json({
+            success: false,
+            message: "Неверный номер поста"
+        });
+    }
+
+    // ----------------------------------------
+    // ПРОВЕРЯЕМ СУММУ
+    // ----------------------------------------
+
+    if (
+        !Number.isFinite(numericAmount) ||
+        numericAmount < 10
+    ) {
+        return res.status(400).json({
+            success: false,
+            message: "Минимальная сумма — 10 сом"
+        });
+    }
+
+    // Сумма должна быть кратна 10
+    if (numericAmount % 10 !== 0) {
+        return res.status(400).json({
+            success: false,
+            message: "Сумма должна быть кратна 10 сом"
+        });
+    }
+
+    try {
+
+        // ----------------------------------------
+        // ПРОВЕРЯЕМ АДМИНИСТРАТОРА
+        // ----------------------------------------
+
+        const admin = db.prepare(`
+            SELECT
+                id,
+                name,
+                phone,
+                role
+            FROM users
+            WHERE phone = ?
+        `).get(adminPhone);
+
+        if (!admin || admin.role !== "admin") {
+            return res.status(403).json({
+                success: false,
+                message: "Доступ запрещён"
+            });
+        }
+
+        // ----------------------------------------
+        // РАССЧИТЫВАЕМ ИМПУЛЬСЫ
+        // ----------------------------------------
+
+        const coins = Math.floor(
+            numericAmount / 10
+        );
+
+        // ----------------------------------------
+        // СОЗДАЁМ ID ПЛАТЕЖА
+        // ----------------------------------------
+
+        const paymentId =
+            "ADMIN-" +
+            Date.now() +
+            "-" +
+            Math.floor(
+                Math.random() * 1000
+            );
+
+        const createdAt =
+            new Date().toISOString();
+
+        // ----------------------------------------
+        // СОХРАНЯЕМ В ИСТОРИЮ ПЛАТЕЖЕЙ
+        // ----------------------------------------
+
+        db.prepare(`
+            INSERT INTO payments
+            (
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            paymentId,
+            numericPost,
+            numericAmount,
+            "paid",
+            createdAt
+        );
+
+        // ----------------------------------------
+        // СОЗДАЁМ КОМАНДУ ДЛЯ ESP32
+        // ----------------------------------------
+
+        const command = db.prepare(`
+            INSERT INTO esp32_commands
+            (
+                post,
+                coins,
+                status,
+                created_at
+            )
+            VALUES (?, ?, 'pending', ?)
+        `).run(
+            numericPost,
+            coins,
+            createdAt
+        );
+
+        const commandId =
+            Number(command.lastInsertRowid);
+
+        // ----------------------------------------
+        // ЛОГ
+        // ----------------------------------------
+
+        console.log(
+            `АДМИН ${admin.phone}: пост ${numericPost}, сумма ${numericAmount} сом, импульсов ${coins}, команда ${commandId}`
+        );
+
+        // ----------------------------------------
+        // ОТВЕТ ПРИЛОЖЕНИЮ
+        // ----------------------------------------
+
+        res.json({
+            success: true,
+            message: "Пост успешно запущен",
+
+            paymentId: paymentId,
+
+            post: numericPost,
+
+            amount: numericAmount,
+
+            coins: coins,
+
+            commandId: commandId
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Ошибка ручного запуска поста:",
+            error
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка сервера"
+        });
+    }
+});
+
+//=========================================
+// MBANK WEBHOOK - QR BASED PAYMENT
+// ========================================
+
+app.post("/api/mbank/webhook", (req, res) => {
+
+    const {
+        transactionId,
+        qrId,
+        status
+    } = req.body;
+
+    console.log("MBANK WEBHOOK: request received");
+    console.log("Data:", req.body);
+
+    if (!transactionId || !qrId) {
+        return res.status(400).json({
+            success: false,
+            message: "Missing transactionId or qrId"
+        });
+    }
+
+    if (
+        status &&
+        !["paid", "success", "successful"].includes(
+            String(status).toLowerCase()
+        )
+    ) {
+        return res.json({
+            success: true,
+            message: "Payment is not confirmed",
+            processed: false
+        });
+    }
+
+    // QR format:
+    // POST1_20
+    // POST1_50
+    // POST1_100
+    // POST1_200
+    // POST2_20
+    // POST2_50
+    // POST2_100
+    // POST2_200
+
+    const qrMatch = String(qrId).match(
+        /^POST([12])_(20|50|100|200)$/
+    );
+
+    if (!qrMatch) {
+        return res.status(400).json({
+            success: false,
+            message: "Unknown QR code"
+        });
+    }
+
+    const numericPost = Number(qrMatch[1]);
+    const numericAmount = Number(qrMatch[2]);
+
+    const coins = Math.floor(
+        numericAmount / 10
+    );
+
+    try {
+
+        const paymentId =
+            "MBANK-" + String(transactionId);
+
+        const existingPayment = db.prepare(`
+            SELECT *
+            FROM payments
+            WHERE id = ?
+        `).get(paymentId);
+
+        if (existingPayment) {
+
+            console.log(
+                "MBANK: payment already processed:",
+                transactionId
+            );
+
+            return res.json({
+                success: true,
+                message: "Payment already processed",
+                processed: true,
+                duplicate: true,
+                payment: existingPayment
+            });
+        }
+
+        const createdAt =
+            new Date().toISOString();
+
+        db.prepare(`
+            INSERT INTO payments
+            (
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, 'paid', ?)
+        `).run(
+            paymentId,
+            numericPost,
+            numericAmount,
+            createdAt
+        );
+
+        const command = db.prepare(`
+            INSERT INTO esp32_commands
+            (
+                post,
+                coins,
+                status,
+                created_at
+            )
+            VALUES (?, ?, 'pending', ?)
+        `).run(
+            numericPost,
+            coins,
+            createdAt
+        );
+
+        const commandId =
+            Number(command.lastInsertRowid);
+
+        console.log("MBANK: payment processed");
+        console.log("Transaction:", transactionId);
+        console.log("QR:", qrId);
+        console.log("Post:", numericPost);
+        console.log("Amount:", numericAmount);
+        console.log("ESP32 impulses:", coins);
+        console.log("ESP32 command:", commandId);
+
+        return res.json({
+            success: true,
+            message: "MBANK payment accepted",
+            processed: true,
+
+            payment: {
+                id: paymentId,
+                transactionId: transactionId,
+                qrId: qrId,
+                post: numericPost,
+                amount: numericAmount,
+                status: "paid"
+            },
+
+            coins: coins,
+            commandId: commandId
+        });
+
+    } catch (error) {
+
+        console.error(
+            "MBANK webhook error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "MBANK webhook processing error"
+        });
+    }
+});
+
+// ========================================
+// END MBANK WEBHOOK
 // ========================================
 
 app.get("/esp32/command", (req, res) => {
