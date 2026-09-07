@@ -2954,6 +2954,236 @@ app.get("/fake-bank/info", (req, res) => {
 });
 
 // ========================================
+// MBANK WEBHOOK + BROWSER TEST
+// ========================================
+
+function processMbankPayment(transactionId, qrId, status = "paid") {
+
+    console.log("MBANK WEBHOOK: request received");
+    console.log("Transaction:", transactionId);
+    console.log("QR:", qrId);
+    console.log("Status:", status);
+
+    // Проверяем статус платежа
+    if (
+        status &&
+        !["paid", "success", "successful"].includes(
+            String(status).toLowerCase()
+        )
+    ) {
+        return {
+            success: true,
+            message: "Payment is not confirmed",
+            processed: false
+        };
+    }
+
+    // Тестовый формат QR:
+    // POST1_20
+    // POST1_50
+    // POST1_100
+    // POST1_200
+    // POST2_20
+    // POST2_50
+    // POST2_100
+    // POST2_200
+
+    const qrMatch = String(qrId).match(
+        /^POST([12])_(20|50|100|200)$/
+    );
+
+    if (!qrMatch) {
+        return {
+            success: false,
+            message: "Unknown QR code"
+        };
+    }
+
+    const numericPost = Number(qrMatch[1]);
+    const numericAmount = Number(qrMatch[2]);
+
+    // 10 сом = 1 импульс
+    const coins = Math.floor(
+        numericAmount / 10
+    );
+
+    const paymentId =
+        "MBANK-" + String(transactionId);
+
+    // Проверяем дубликат
+    const existingPayment = db.prepare(`
+        SELECT *
+        FROM payments
+        WHERE id = ?
+    `).get(paymentId);
+
+    if (existingPayment) {
+
+        console.log(
+            "MBANK: payment already processed:",
+            transactionId
+        );
+
+        return {
+            success: true,
+            message: "Payment already processed",
+            processed: true,
+            duplicate: true,
+            payment: existingPayment
+        };
+    }
+
+    const createdAt =
+        new Date().toISOString();
+
+    try {
+
+        // Записываем платёж
+        db.prepare(`
+            INSERT INTO payments
+            (
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, 'paid', ?)
+        `).run(
+            paymentId,
+            numericPost,
+            numericAmount,
+            createdAt
+        );
+
+        // Создаём команду для ESP32
+        const command = db.prepare(`
+            INSERT INTO esp32_commands
+            (
+                post,
+                coins,
+                status,
+                created_at
+            )
+            VALUES (?, ?, 'pending', ?)
+        `).run(
+            numericPost,
+            coins,
+            createdAt
+        );
+
+        const commandId =
+            Number(command.lastInsertRowid);
+
+        console.log("=================================");
+        console.log("MBANK PAYMENT ACCEPTED");
+        console.log("Transaction:", transactionId);
+        console.log("QR:", qrId);
+        console.log("Post:", numericPost);
+        console.log("Amount:", numericAmount);
+        console.log("ESP32 impulses:", coins);
+        console.log("ESP32 command:", commandId);
+        console.log("=================================");
+
+        return {
+            success: true,
+            message: "MBANK payment accepted",
+            processed: true,
+
+            payment: {
+                id: paymentId,
+                transactionId: transactionId,
+                qrId: qrId,
+                post: numericPost,
+                amount: numericAmount,
+                status: "paid"
+            },
+
+            coins: coins,
+            commandId: commandId
+        };
+
+    } catch (error) {
+
+        console.error(
+            "MBANK payment error:",
+            error
+        );
+
+        return {
+            success: false,
+            message: "MBANK payment processing error"
+        };
+    }
+}
+
+
+// ========================================
+// REAL MBANK WEBHOOK
+// ========================================
+
+app.post("/api/mbank/webhook", (req, res) => {
+
+    const {
+        transactionId,
+        qrId,
+        status
+    } = req.body;
+
+    if (!transactionId || !qrId) {
+        return res.status(400).json({
+            success: false,
+            message: "Missing transactionId or qrId"
+        });
+    }
+
+    const result =
+        processMbankPayment(
+            transactionId,
+            qrId,
+            status
+        );
+
+    if (!result.success) {
+        return res.status(400).json(result);
+    }
+
+    return res.json(result);
+});
+
+
+// ========================================
+// BROWSER TEST
+// ========================================
+
+app.get("/api/mbank/test", (req, res) => {
+
+    const qrId =
+        req.query.qrId || "POST1_50";
+
+    const transactionId =
+        req.query.transactionId ||
+        "BROWSER-TEST-" + Date.now();
+
+    const result =
+        processMbankPayment(
+            transactionId,
+            qrId,
+            "paid"
+        );
+
+    return res.json({
+        test: true,
+        ...result
+    });
+});
+
+
+// ========================================
+// END MBANK WEBHOOK + TEST
+// ========================================
+
+// ========================================
 // ЗАПУСК СЕРВЕРА
 // ========================================
 
