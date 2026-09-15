@@ -73,6 +73,10 @@ async function createMikassaStaticQR({
 // TEST: CREATE REAL MKASSA STATIC QR
 // ========================================
 
+// ========================================
+// TEST: CREATE / GET STATIC MKASSA QR
+// ========================================
+
 app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
 
     const token = req.get("x-washqr-test-token");
@@ -88,14 +92,60 @@ app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
 
     try {
 
+        // Проверяем, есть ли QR POST1_20
+        const existing = db.prepare(`
+            SELECT *
+            FROM static_qr
+            WHERE qr_id = ?
+        `).get("POST1_20");
+
+        if (existing) {
+
+            return res.json({
+                success: true,
+                created: false,
+                message: "QR уже существует",
+                qr: existing
+            });
+        }
+
+        // Создаём QR в MKassa
         const data = await createMikassaStaticQR({
             amount: 20,
             qrId: "POST1_20"
         });
 
+        // Сохраняем QR в нашу базу
+        const result = db.prepare(`
+            INSERT INTO static_qr (
+                qr_id,
+                amount,
+                post,
+                mkassa_id,
+                static_qr_link,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+            "POST1_20",
+            20,
+            1,
+            String(data.id),
+            data.static_qr_link,
+            new Date().toISOString()
+        );
+
         res.json({
             success: true,
-            qr: data
+            created: true,
+            databaseId: result.lastInsertRowid,
+            qr: {
+                qr_id: "POST1_20",
+                amount: 20,
+                post: 1,
+                mkassa_id: data.id,
+                static_qr_link: data.static_qr_link
+            }
         });
 
     } catch (error) {

@@ -125,6 +125,22 @@ db.prepare(`
     )
 `).run();
 
+// ========================================
+// СТАТИЧЕСКИЕ QR MKASSA
+// ========================================
+
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS static_qr (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        qr_id TEXT NOT NULL UNIQUE,
+        amount INTEGER NOT NULL,
+        post INTEGER NOT NULL,
+        mkassa_id TEXT,
+        static_qr_link TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+`).run();
+
 console.log(
     "Таблицы users, payments и esp32_commands готовы"
 );
