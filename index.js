@@ -154,6 +154,103 @@ app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
 });
 
 // ========================================
+// CREATE ALL 8 MKASSA STATIC QR
+// ========================================
+
+app.post("/api/mkassa/test/create-all-static-qr", async (req, res) => {
+
+    try {
+
+        const qrList = [
+            { qrId: "POST1_20",  amount: 20,  post: 1 },
+            { qrId: "POST1_50",  amount: 50,  post: 1 },
+            { qrId: "POST1_100", amount: 100, post: 1 },
+            { qrId: "POST1_200", amount: 200, post: 1 },
+
+            { qrId: "POST2_20",  amount: 20,  post: 2 },
+            { qrId: "POST2_50",  amount: 50,  post: 2 },
+            { qrId: "POST2_100", amount: 100, post: 2 },
+            { qrId: "POST2_200", amount: 200, post: 2 }
+        ];
+
+        const results = [];
+
+        for (const item of qrList) {
+
+            const existing = db.prepare(`
+                SELECT *
+                FROM static_qr
+                WHERE qr_id = ?
+            `).get(item.qrId);
+
+            if (existing) {
+
+                results.push({
+                    qr_id: item.qrId,
+                    status: "already_exists",
+                    mkassa_id: existing.mkassa_id,
+                    static_qr_link: existing.static_qr_link
+                });
+
+                continue;
+            }
+
+            // MKassa принимает сумму в 1/100 сома
+            const data = await createMikassaStaticQR({
+                amount: item.amount * 100,
+                qrId: item.qrId
+            });
+
+            db.prepare(`
+                INSERT INTO static_qr (
+                    qr_id,
+                    amount,
+                    post,
+                    mkassa_id,
+                    static_qr_link,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            `).run(
+                item.qrId,
+                item.amount,
+                item.post,
+                String(data.id),
+                data.static_qr_link,
+                new Date().toISOString()
+            );
+
+            results.push({
+                qr_id: item.qrId,
+                amount: item.amount,
+                post: item.post,
+                mkassa_id: data.id,
+                static_qr_link: data.static_qr_link
+            });
+        }
+
+        res.json({
+            success: true,
+            count: results.length,
+            qr: results
+        });
+
+    } catch (error) {
+
+        console.error(
+            "MKASSA CREATE ALL QR ERROR:",
+            error.message
+        );
+
+        res.status(502).json({
+            success: false,
+            message: "MKassa API error",
+            error: error.message
+        });
+    }
+});
+
+// ========================================
 // QR IMAGE FOR SAVED MKASSA QR
 // ========================================
 
