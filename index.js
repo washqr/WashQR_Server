@@ -3119,68 +3119,449 @@ function processMbankPayment(transactionId, qrId, status = "paid") {
 
 
 // ========================================
-// REAL MBANK WEBHOOK
+// MBANK REAL WEBHOOK - STATIC QR
 // ========================================
 
 app.post("/api/mbank/webhook", (req, res) => {
 
+    console.log();
+    console.log("========================================");
+    console.log("MBANK WEBHOOK: REQUEST RECEIVED");
+    console.log("========================================");
+
+    console.log("MBANK DATA:", req.body);
+
     const {
-        transactionId,
-        qrId,
-        status
+        id,
+        status,
+        amount,
+        metadata,
+        paid_at
     } = req.body;
 
-    if (!transactionId || !qrId) {
+
+    // ========================================
+    // ПРОВЕРКА ОБЯЗАТЕЛЬНЫХ ДАННЫХ
+    // ========================================
+
+    if (!id) {
+
+        console.log("MBANK ERROR: отсутствует id");
+
         return res.status(400).json({
             success: false,
-            message: "Missing transactionId or qrId"
+            message: "Missing transaction id"
         });
     }
 
-    const result =
-        processMbankPayment(
-            transactionId,
-            qrId,
+
+    if (!amount) {
+
+        console.log("MBANK ERROR: отсутствует amount");
+
+        return res.status(400).json({
+            success: false,
+            message: "Missing amount"
+        });
+    }
+
+
+    // ========================================
+    // ПРОВЕРКА СТАТУСА
+    // ========================================
+
+    if (
+        status &&
+        String(status).toLowerCase() !== "paid"
+    ) {
+
+        console.log(
+            "MBANK: платёж ещё не подтверждён:",
             status
         );
 
-    if (!result.success) {
-        return res.status(400).json(result);
+        return res.status(200).json({
+            success: true,
+            processed: false,
+            message: "Payment is not paid"
+        });
     }
 
-    return res.json(result);
-});
+
+    // ========================================
+    // ИЩЕМ НАШ QR ID В METADATA
+    //
+    // Например:
+    // POST1_20
+    // POST1_50
+    // POST1_100
+    // POST1_200
+    //
+    // POST2_20
+    // POST2_50
+    // POST2_100
+    // POST2_200
+    // ========================================
+
+    let qrId = null;
+
+    if (metadata && typeof metadata === "object") {
+
+        for (const key of Object.keys(metadata)) {
+
+            const value = String(
+                metadata[key] ?? ""
+            ).trim();
+
+            if (
+                /^POST([12])_(20|50|100|200)$/.test(value)
+            ) {
+
+                qrId = value;
+
+                break;
+            }
+        }
+    }
 
 
-// ========================================
-// BROWSER TEST
-// ========================================
+    // ========================================
+    // ЕСЛИ QR ID НЕ НАЙДЕН
+    // ========================================
 
-app.get("/api/mbank/test", (req, res) => {
+    if (!qrId) {
 
-    const qrId =
-        req.query.qrId || "POST1_50";
-
-    const transactionId =
-        req.query.transactionId ||
-        "BROWSER-TEST-" + Date.now();
-
-    const result =
-        processMbankPayment(
-            transactionId,
-            qrId,
-            "paid"
+        console.log(
+            "MBANK ERROR: POST QR ID не найден в metadata"
         );
 
-    return res.json({
-        test: true,
-        ...result
-    });
+        return res.status(400).json({
+            success: false,
+            message: "QR ID not found in metadata"
+        });
+    }
+
+
+    console.log("MBANK QR ID:", qrId);
+
+
+    // ========================================
+    // РАЗБИРАЕМ QR
+    // ========================================
+
+    const qrMatch = qrId.match(
+        /^POST([12])_(20|50|100|200)$/
+    );
+
+
+    if (!qrMatch) {
+
+        console.log(
+            "MBANK ERROR: неизвестный QR:",
+            qrId
+        );
+
+        return res.status(400).json({
+            success: false,
+            message: "Unknown QR code"
+        });
+    }
+
+
+    const numericPost =
+        Number(qrMatch[1]);
+
+    const qrAmount =
+        Number(qrMatch[2]);
+
+
+    // ========================================
+    // ПРОВЕРЯЕМ СУММУ
+    // ========================================
+
+    const numericAmount =
+        Number(amount);
+
+
+    if (
+        !Number.isFinite(numericAmount) ||
+        numericAmount <= 0
+    ) {
+
+        console.log(
+            "MBANK ERROR: неправильная сумма:",
+            amount
+        );
+
+        return res.status(400).json({
+            success: false,
+            message: "Invalid amount"
+        });
+    }
+
+
+    if (numericAmount !== qrAmount) {
+
+        console.log(
+            "MBANK ERROR: сумма не совпадает с QR"
+        );
+
+        console.log(
+            "QR amount:",
+            qrAmount
+        );
+
+        console.log(
+            "MBANK amount:",
+            numericAmount
+        );
+
+        return res.status(400).json({
+            success: false,
+            message: "Amount does not match QR"
+        });
+    }
+
+
+    // ========================================
+    // 10 СОМ = 1 ИМПУЛЬС
+    // ========================================
+
+    const coins =
+        Math.floor(numericAmount / 10);
+
+
+    if (coins <= 0) {
+
+        return res.status(400).json({
+            success: false,
+            message: "Invalid impulse count"
+        });
+    }
+
+
+    try {
+
+        // ========================================
+        // ID ПЛАТЕЖА
+        // ========================================
+
+        const paymentId =
+            "MBANK-" + String(id);
+
+
+        // ========================================
+        // ЗАЩИТА ОТ ПОВТОРНОЙ ОПЛАТЫ
+        // ========================================
+
+        const existingPayment =
+            db.prepare(`
+                SELECT *
+                FROM payments
+                WHERE id = ?
+            `).get(paymentId);
+
+
+        if (existingPayment) {
+
+            console.log();
+            console.log(
+                "MBANK: ПЛАТЁЖ УЖЕ ОБРАБОТАН"
+            );
+
+            console.log(
+                "Transaction:",
+                id
+            );
+
+            console.log(
+                "Payment ID:",
+                paymentId
+            );
+
+            return res.status(200).json({
+
+                success: true,
+
+                processed: true,
+
+                duplicate: true,
+
+                message:
+                    "Payment already processed",
+
+                payment: existingPayment
+            });
+        }
+
+
+        // ========================================
+        // ВРЕМЯ
+        // ========================================
+
+        const createdAt =
+            paid_at ||
+            new Date().toISOString();
+
+
+        // ========================================
+        // СОХРАНЯЕМ ПЛАТЁЖ
+        // ========================================
+
+        db.prepare(`
+            INSERT INTO payments
+            (
+                id,
+                post,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, 'paid', ?)
+        `).run(
+
+            paymentId,
+
+            numericPost,
+
+            numericAmount,
+
+            createdAt
+        );
+
+
+        // ========================================
+        // СОЗДАЁМ КОМАНДУ ДЛЯ ESP32
+        // ========================================
+
+        const command =
+            db.prepare(`
+                INSERT INTO esp32_commands
+                (
+                    post,
+                    coins,
+                    status,
+                    created_at
+                )
+                VALUES (?, ?, 'pending', ?)
+            `).run(
+
+                numericPost,
+
+                coins,
+
+                createdAt
+            );
+
+
+        const commandId =
+            Number(command.lastInsertRowid);
+
+
+        // ========================================
+        // ЛОГ
+        // ========================================
+
+        console.log();
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "MBANK PAYMENT ACCEPTED"
+        );
+
+        console.log(
+            "Transaction:",
+            id
+        );
+
+        console.log(
+            "QR:",
+            qrId
+        );
+
+        console.log(
+            "Post:",
+            numericPost
+        );
+
+        console.log(
+            "Amount:",
+            numericAmount
+        );
+
+        console.log(
+            "ESP32 impulses:",
+            coins
+        );
+
+        console.log(
+            "ESP32 command:",
+            commandId
+        );
+
+        console.log(
+            "========================================"
+        );
+
+
+        // ========================================
+        // ОТВЕТ MBANK
+        // ========================================
+
+        return res.status(200).json({
+
+            success: true,
+
+            processed: true,
+
+            message:
+                "MBANK payment accepted",
+
+            payment: {
+
+                id: paymentId,
+
+                transactionId: id,
+
+                qrId: qrId,
+
+                post: numericPost,
+
+                amount: numericAmount,
+
+                status: "paid"
+            },
+
+            coins: coins,
+
+            commandId: commandId
+        });
+
+
+    } catch (error) {
+
+        console.error();
+        console.error(
+            "MBANK WEBHOOK ERROR:",
+            error
+        );
+
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "MBANK webhook processing error"
+        });
+    }
 });
 
 
 // ========================================
-// END MBANK WEBHOOK + TEST
+// END REAL MBANK WEBHOOK
 // ========================================
 
 // ========================================
@@ -3194,7 +3575,6 @@ app.listen(
     PORT,
     "0.0.0.0",
     () => {
-
         console.log(
             "================================="
         );
