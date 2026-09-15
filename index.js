@@ -70,6 +70,50 @@ async function createMikassaStaticQR({
 }
 
 // ========================================
+// TEST: CREATE REAL MKASSA STATIC QR
+// ========================================
+
+app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
+
+    const token = req.get("x-washqr-test-token");
+
+    if (!process.env.MKASSA_TEST_TOKEN ||
+        token !== process.env.MKASSA_TEST_TOKEN) {
+
+        return res.status(401).json({
+            success: false,
+            message: "Unauthorized"
+        });
+    }
+
+    try {
+
+        const data = await createMikassaStaticQR({
+            amount: 20,
+            qrId: "POST1_20"
+        });
+
+        res.json({
+            success: true,
+            qr: data
+        });
+
+    } catch (error) {
+
+        console.error(
+            "MKASSA CREATE QR ERROR:",
+            error.message
+        );
+
+        res.status(502).json({
+            success: false,
+            message: "MKassa API error",
+            error: error.message
+        });
+    }
+});
+
+// ========================================
 // ГЛАВНАЯ СТРАНИЦА
 // ========================================
 
