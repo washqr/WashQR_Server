@@ -196,6 +196,8 @@ app.post("/api/mkassa/test/create-all-static-qr", async (req, res) => {
             }
 
             // MKassa принимает сумму в 1/100 сома
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
             const data = await createMikassaStaticQR({
                 amount: item.amount * 100,
                 qrId: item.qrId
