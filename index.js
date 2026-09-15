@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const db = require("./database");
+const QRCode = require("qrcode");
 const MKASSA_API_KEY = process.env.MKASSA_API_KEY;
 
 console.log("MKASSA API KEY:", MKASSA_API_KEY ? "SET" : "NOT SET");
@@ -159,6 +160,53 @@ app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
             success: false,
             message: "MKassa API error",
             error: error.message
+        });
+    }
+});
+
+// ========================================
+// QR IMAGE FOR SAVED MKASSA QR
+// ========================================
+
+app.get("/api/mkassa/qr-image/:qrId", async (req, res) => {
+
+    try {
+
+        const qr = db.prepare(`
+            SELECT *
+            FROM static_qr
+            WHERE qr_id = ?
+        `).get(req.params.qrId);
+
+        if (!qr) {
+            return res.status(404).json({
+                success: false,
+                message: "QR не найден"
+            });
+        }
+
+        const png = await QRCode.toBuffer(
+            qr.static_qr_link,
+            {
+                type: "png",
+                width: 800,
+                margin: 4
+            }
+        );
+
+        res.setHeader("Content-Type", "image/png");
+        res.send(png);
+
+    } catch (error) {
+
+        console.error(
+            "QR IMAGE ERROR:",
+            error.message
+        );
+
+        res.status(500).json({
+            success: false,
+            message: "Ошибка генерации QR"
         });
     }
 });
