@@ -11,6 +11,65 @@ app.use(cors());
 app.use(express.json());
 
 // ========================================
+// MKASSA API
+// ========================================
+
+const MKASSA_API_URL =
+    "https://api.mkassa.kg/api/partners/qr-static/create_static_qr/";
+
+async function createMikassaStaticQR({
+    amount,
+    qrId
+}) {
+
+    if (!MKASSA_API_KEY) {
+        throw new Error("MKASSA_API_KEY не установлен");
+    }
+
+    const response = await fetch(
+        MKASSA_API_URL,
+        {
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization":
+                    `api-key ${MKASSA_API_KEY}`
+            },
+
+            body: JSON.stringify({
+
+                branch: 250476,
+
+                cashier: 142917,
+
+                amount: amount,
+
+                change_amount: false,
+
+                metadata: {
+                    key1: qrId,
+                    key2: "WashQR",
+                    key3: `POST${qrId.split("_")[0].replace("POST", "")}`,
+                    key4: String(amount),
+                    key5: "static"
+                }
+            })
+        }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(
+            `MKassa API ${response.status}: ${JSON.stringify(data)}`
+        );
+    }
+
+    return data;
+}
+
+// ========================================
 // ГЛАВНАЯ СТРАНИЦА
 // ========================================
 
