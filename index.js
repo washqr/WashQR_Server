@@ -80,18 +80,7 @@ async function createMikassaStaticQR({
 
 app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
 
-    const token = req.get("x-washqr-test-token");
-
-    if (!process.env.MKASSA_TEST_TOKEN ||
-        token !== process.env.MKASSA_TEST_TOKEN) {
-
-        return res.status(401).json({
-            success: false,
-            message: "Unauthorized"
-        });
-    }
-
-    try {
+        try {
 
         // Проверяем, есть ли QR POST1_20
         const existing = db.prepare(`
