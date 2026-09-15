@@ -172,11 +172,22 @@ app.get("/api/mkassa/qr-image/:qrId", async (req, res) => {
 
     try {
 
-        const qr = db.prepare(`
-            SELECT *
-            FROM static_qr
-            WHERE qr_id = ?
-        `).get(req.params.qrId);
+        const qrFromDb = db.prepare(`
+    SELECT *
+    FROM static_qr
+    WHERE qr_id = ?
+`).get(req.params.qrId);
+
+const envLink = process.env[`MKASSA_${req.params.qrId}_LINK`];
+
+const qr = qrFromDb || (
+    envLink
+        ? {
+            qr_id: req.params.qrId,
+            static_qr_link: envLink
+        }
+        : null
+);
 
         if (!qr) {
             return res.status(404).json({
