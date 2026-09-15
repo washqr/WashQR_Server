@@ -1,6 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const db = require("./database");
+const MKASSA_API_KEY = process.env.MKASSA_API_KEY;
+
+console.log("MKASSA API KEY:", MKASSA_API_KEY ? "SET" : "NOT SET");
 
 const app = express();
 
