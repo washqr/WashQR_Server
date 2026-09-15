@@ -98,7 +98,7 @@ app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
             SELECT *
             FROM static_qr
             WHERE qr_id = ?
-        `).get("POST1_20");
+        `).get("POST1_20_TEST2000");
 
         if (existing) {
 
@@ -112,8 +112,8 @@ app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
 
         // Создаём QR в MKassa
         const data = await createMikassaStaticQR({
-            amount: 20,
-            qrId: "POST1_20"
+            amount: 2000,
+            qrId:  "POST1_20_TEST2000"
         });
 
         // Сохраняем QR в нашу базу
@@ -128,8 +128,8 @@ app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
             )
             VALUES (?, ?, ?, ?, ?, ?)
         `).run(
-            "POST1_20",
-            20,
+            "POST1_20_TEST2000",
+            2000,
             1,
             String(data.id),
             data.static_qr_link,
@@ -141,8 +141,8 @@ app.post("/api/mkassa/test/create-static-qr", async (req, res) => {
             created: true,
             databaseId: result.lastInsertRowid,
             qr: {
-                qr_id: "POST1_20",
-                amount: 20,
+                qr_id: "POST1_20_TEST2000",
+                amount: 2000,
                 post: 1,
                 mkassa_id: data.id,
                 static_qr_link: data.static_qr_link
