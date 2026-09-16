@@ -4014,6 +4014,48 @@ setInterval(
 
 checkMikassaPayments();
 
+// ========================================
+// ВРЕМЕННАЯ ДИАГНОСТИКА MKASSA
+// ========================================
+
+app.get("/debug/mkassa", async (req, res) => {
+    const url =
+        "https://api.mkassa.kg/api/partners/v1/transactions/";
+
+    try {
+        const start = Date.now();
+
+        const response = await fetch(url, {
+            method: "GET",
+            signal: AbortSignal.timeout(15000)
+        });
+
+        const text = await response.text();
+
+        res.json({
+            success: true,
+            status: response.status,
+            duration_ms: Date.now() - start,
+            response: text.slice(0, 500)
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            name: error.name,
+            message: error.message,
+            code: error.code || null,
+            cause: error.cause
+                ? {
+                    name: error.cause.name,
+                    message: error.cause.message,
+                    code: error.cause.code || null
+                }
+                : null
+        });
+    }
+});
+
 app.listen(
     PORT,
     "0.0.0.0",
