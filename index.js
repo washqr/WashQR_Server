@@ -184,16 +184,15 @@ app.post("/api/mkassa/test/create-all-static-qr", async (req, res) => {
             `).get(item.qrId);
 
             if (existing) {
+    results.push({
+        qr_id: item.qrId,
+        status: "already_exists",
+        mkassa_id: existing.mkassa_id,
+        static_qr_link: existing.static_qr_link
+    });
 
-                results.push({
-                    qr_id: item.qrId,
-                    status: "already_exists",
-                    mkassa_id: existing.mkassa_id,
-                    static_qr_link: existing.static_qr_link
-                });
-
-                continue;
-            }
+    continue;
+}
 
             // MKassa принимает сумму в 1/100 сома
             await new Promise(resolve => setTimeout(resolve, 2000));
@@ -414,30 +413,34 @@ app.post("/register", (req, res) => {
         }
 
         const result = db.prepare(`
-            INSERT INTO users
-            (
-                name,
-                phone,
-                pin,
-                balance,
-                bonus,
-                role,
-                one_time_pin,
-                one_time_pin_used
-            )
-            VALUES (?, ?, ?, 0, 0, 'user', NULL, 0)
-        `).run(
-            name,
-            phone,
-            String(pin)
-        );
+    INSERT INTO users
+    (
+        name,
+        phone,
+        pin,
+        balance,
+        bonus,
+        role,
+        one_time_pin,
+        one_time_pin_used
+    )
+    VALUES (?, ?, ?, 0, 0, 'user', NULL, 0)
+`).run(
+    name,
+    phone,
+    String(pin)
+);
 
-        const user = db.prepare(`
+const userId = result.lastInsertRowid;
+
+const user = db.prepare(`
     SELECT
         id,
         name,
         phone,
-        bonus
+        balance,
+        bonus,
+        role
     FROM users
     WHERE id = ?
 `).get(userId);
