@@ -71,6 +71,206 @@ async function createMikassaStaticQR({
 }
 
 // ========================================
+// АВТОМАТИЧЕСКАЯ ПРОВЕРКА ПЛАТЕЖЕЙ MKASSA
+// ========================================
+
+const MKASSA_TRANSACTIONS_URL =
+    "https://api.mkassa.kg/api/partners/v1/transactions/";
+
+async function checkMikassaPayments() {
+    try {
+        if (!MKASSA_API_KEY) {
+            console.error("MKASSA API KEY не установлен");
+            return;
+        }
+
+        const today =
+            new Date().toISOString().slice(0, 10);
+
+        const url =
+            `${MKASSA_TRANSACTIONS_URL}?start_date=${today}&end_date=${today}&branch=250476&cashier=142917`;
+
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                "Authorization":
+                    `api-key ${MKASSA_API_KEY}`
+            }
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error(
+                "MKASSA TRANSACTIONS ERROR:",
+                response.status,
+                data
+            );
+            return;
+        }
+
+        const transactions =
+            Array.isArray(data.results)
+                ? data.results
+                : [];
+
+        for (const transaction of transactions) {
+
+            // Нас интересуют только успешные статические QR-платежи
+            if (
+                String(transaction.status).toLowerCase() !== "paid"
+            ) {
+                continue;
+            }
+
+            if (
+                String(transaction.transaction_type).toLowerCase() !== "static"
+            ) {
+                continue;
+            }
+
+            const transactionId =
+                String(transaction.id);
+
+            // Уже обработан?
+            const alreadyProcessed =
+                db.prepare(`
+                    SELECT transaction_id
+                    FROM mkassa_processed
+                    WHERE transaction_id = ?
+                `).get(transactionId);
+
+            if (alreadyProcessed) {
+                continue;
+            }
+
+            const metadata =
+                transaction.metadata || {};
+
+            const qrId =
+                String(metadata.key1 || "");
+
+            const qrMatch =
+                qrId.match(
+                    /^POST([12])_(20|50|100|200)$/
+                );
+
+            if (!qrMatch) {
+                continue;
+            }
+
+            const post =
+                Number(qrMatch[1]);
+
+            const amountSom =
+                Number(qrMatch[2]);
+
+            const coins =
+                Math.floor(amountSom / 10);
+
+            // Сохраняем платеж в нашу таблицу
+            const paymentId =
+                "MKASSA-" + transactionId;
+
+            db.prepare(`
+                INSERT OR IGNORE INTO payments
+                (
+                    id,
+                    post,
+                    amount,
+                    status,
+                    created_at
+                )
+                VALUES (?, ?, ?, 'paid', ?)
+            `).run(
+                paymentId,
+                post,
+                amountSom,
+                transaction.created_at ||
+                    new Date().toISOString()
+            );
+
+            // Создаём команду для ESP32
+            const command =
+                db.prepare(`
+                    INSERT INTO esp32_commands
+                    (
+                        post,
+                        coins,
+                        status,
+                        created_at
+                    )
+                    VALUES (?, ?, 'pending', ?)
+                `).run(
+                    post,
+                    coins,
+                    new Date().toISOString()
+                );
+
+            const commandId =
+                Number(command.lastInsertRowid);
+
+            // Запоминаем транзакцию,
+            // чтобы второй раз импульсы не отправлять
+            db.prepare(`
+                INSERT OR IGNORE INTO mkassa_processed
+                (
+                    transaction_id,
+                    created_at
+                )
+                VALUES (?, ?)
+            `).run(
+                transactionId,
+                new Date().toISOString()
+            );
+
+            console.log("");
+            console.log(
+                "========================================"
+            );
+            console.log(
+                "MKASSA ПЛАТЁЖ ПОЛУЧЕН"
+            );
+            console.log(
+                "Transaction:",
+                transactionId
+            );
+            console.log(
+                "QR:",
+                qrId
+            );
+            console.log(
+                "Пост:",
+                post
+            );
+            console.log(
+                "Сумма:",
+                amountSom,
+                "сом"
+            );
+            console.log(
+                "Импульсов ESP32:",
+                coins
+            );
+            console.log(
+                "Команда ESP32:",
+                commandId
+            );
+            console.log(
+                "========================================"
+            );
+            console.log("");
+        }
+
+    } catch (error) {
+        console.error(
+            "MKASSA POLLING ERROR:",
+            error
+        );
+    }
+}
+
+// ========================================
 // TEST: CREATE REAL MKASSA STATIC QR
 // ========================================
 
@@ -3801,6 +4001,18 @@ app.post("/api/mbank/webhook", (req, res) => {
 
 const PORT =
     process.env.PORT || 3000;
+
+// ========================================
+// MKASSA POLLING
+// Проверяем платежи каждые 5 секунд
+// ========================================
+
+setInterval(
+    checkMikassaPayments,
+    5000
+);
+
+checkMikassaPayments();
 
 app.listen(
     PORT,

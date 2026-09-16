@@ -145,4 +145,15 @@ console.log(
     "Таблицы users, payments и esp32_commands готовы"
 );
 
+// ========================================
+// ОБРАБОТАННЫЕ ТРАНЗАКЦИИ MKASSA
+// ========================================
+
+db.prepare(`
+    CREATE TABLE IF NOT EXISTS mkassa_processed (
+        transaction_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+    )
+`).run();
+
 module.exports = db;
